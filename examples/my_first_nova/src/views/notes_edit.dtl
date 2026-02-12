@@ -1,0 +1,14 @@
+<html>
+<head><title>Edit Note</title></head>
+<body>
+  <h1>Edit Note</h1>
+  <form action="/notes/{{ note.id }}" method="post">
+    <label for="title">Title:</label><br>
+    <input type="text" id="title" name="title" value="{{ note.title }}"><br>
+    <label for="body">Body:</label><br>
+    <textarea id="body" name="body" rows="10" cols="50">{{ note.body }}</textarea><br>
+    <input type="submit" value="Update">
+  </form>
+  <a href="/notes">Back</a>
+</body>
+</html>

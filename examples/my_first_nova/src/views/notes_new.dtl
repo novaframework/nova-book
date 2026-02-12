@@ -1,0 +1,14 @@
+<html>
+<head><title>New Note</title></head>
+<body>
+  <h1>New Note</h1>
+  <form action="/notes" method="post">
+    <label for="title">Title:</label><br>
+    <input type="text" id="title" name="title"><br>
+    <label for="body">Body:</label><br>
+    <textarea id="body" name="body" rows="10" cols="50"></textarea><br>
+    <input type="submit" value="Create">
+  </form>
+  <a href="/notes">Back</a>
+</body>
+</html>

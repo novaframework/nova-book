@@ -1,0 +1,6 @@
+-sname 'my_first_nova'
+
+-setcookie my_first_nova_cookie
+
++K true
++A30

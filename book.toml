@@ -1,0 +1,20 @@
+[book]
+authors = ["Nova Framework Team"]
+language = "en"
+multilingual = false
+src = "src"
+title = "The Nova Book"
+description = "A practical guide to building web applications with Nova and Erlang/OTP"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/novaframework/nova-book"
+edit-url-template = "https://github.com/novaframework/nova-book/edit/main/{path}"
+additional-css = ["src/custom.css", "./mdbook-admonish.css"]
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2" # do not edit: managed by `mdbook-admonish install`
