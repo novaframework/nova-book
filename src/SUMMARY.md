@@ -30,6 +30,12 @@
 - [Sub-Applications](building-app/sub-applications.md)
 - [Deployment](building-app/deployment.md)
 
+# Developer Tools
+
+- [Code Generators](developer-tools/code-generators.md)
+- [OpenAPI & API Documentation](developer-tools/openapi.md)
+- [Inspection & Audit Tools](developer-tools/inspection-tools.md)
+
 # Going Further
 
 - [Pub/Sub](going-further/pubsub.md)

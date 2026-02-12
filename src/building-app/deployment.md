@@ -115,6 +115,17 @@ Build a production release:
 rebar3 as prod release
 ```
 
+If you have JSON schemas in `priv/schemas/`, you can use `nova release` instead. It automatically regenerates the OpenAPI spec before building:
+
+```shell
+rebar3 nova release
+===> Generated priv/assets/openapi.json
+===> Generated priv/assets/swagger.html
+===> Release successfully assembled: _build/prod/rel/my_first_nova
+```
+
+This ensures your deployed application always ships with up-to-date API documentation. See [OpenAPI & API Documentation](../developer-tools/openapi.md) for details.
+
 Start it:
 
 ```shell

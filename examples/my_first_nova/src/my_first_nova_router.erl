@@ -66,7 +66,12 @@ routes(_Environment) ->
                  {"/notes/:id", fun my_first_nova_notes_api_controller:delete/1, #{methods => [delete]}},
                  {"/users", fun my_first_nova_api_controller:index/1, #{methods => [get]}},
                  {"/users/:id", fun my_first_nova_api_controller:show/1, #{methods => [get]}},
-                 {"/users", fun my_first_nova_api_controller:create/1, #{methods => [post]}}
+                 {"/users", fun my_first_nova_api_controller:create/1, #{methods => [post]}},
+                 {"/products", fun my_first_nova_products_controller:list/1, #{methods => [get]}},
+                 {"/products/:id", fun my_first_nova_products_controller:show/1, #{methods => [get]}},
+                 {"/products", fun my_first_nova_products_controller:create/1, #{methods => [post]}},
+                 {"/products/:id", fun my_first_nova_products_controller:update/1, #{methods => [put]}},
+                 {"/products/:id", fun my_first_nova_products_controller:delete/1, #{methods => [delete]}}
                 ]
     }
   ].

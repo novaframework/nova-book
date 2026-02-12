@@ -199,3 +199,29 @@ nova_pubsub:get_local_members(Channel)
 | `rebar3 as prod release` | Build production release |
 | `rebar3 as prod tar` | Build release tarball |
 | `rebar3 dialyzer` | Run type checker |
+
+## Nova developer tool commands
+
+| Command | Description |
+|---|---|
+| `rebar3 nova gen_controller --name NAME` | Generate a controller with stub actions |
+| `rebar3 nova gen_resource --name NAME` | Generate controller + JSON schema + route hints |
+| `rebar3 nova gen_test --name NAME` | Generate a Common Test suite |
+| `rebar3 nova openapi` | Generate OpenAPI 3.0.3 spec + Swagger UI |
+| `rebar3 nova config` | Show Nova configuration with defaults |
+| `rebar3 nova middleware` | Show global and per-group plugin chains |
+| `rebar3 nova audit` | Find routes missing security callbacks |
+| `rebar3 nova release` | Build release with auto-generated OpenAPI |
+
+### Generator options
+
+```shell
+# Controller with specific actions
+rebar3 nova gen_controller --name products --actions list,show,create
+
+# OpenAPI with custom output
+rebar3 nova openapi --output priv/assets/openapi.json --title "My API" --api-version 1.0.0
+
+# Release with specific profile
+rebar3 nova release --profile staging
+```

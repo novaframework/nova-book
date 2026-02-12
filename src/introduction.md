@@ -21,7 +21,8 @@ Throughout this book you will build a notes application step by step:
 3. **A JSON API** — RESTful endpoints returning JSON, with path parameters and request body parsing
 4. **Database persistence** — PostgreSQL integration with connection pooling
 5. **Real-time features** — WebSockets and pub/sub for live notifications
-6. **Production deployment** — OTP releases, Docker, and systemd
+6. **Developer tooling** — code generators, OpenAPI documentation, and security audits
+7. **Production deployment** — OTP releases, Docker, and systemd
 
 By the end you will have a complete, deployable application and a solid understanding of how Nova works.
 
