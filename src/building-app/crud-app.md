@@ -96,7 +96,17 @@ row_to_map({Id, Title, Body, Author, InsertedAt}) ->
 
 ## JSON API controller
 
-Create `src/controllers/my_first_nova_notes_api_controller.erl`:
+We can scaffold the API controller and a JSON schema in one step with the code generator:
+
+```shell
+rebar3 nova gen_resource --name notes
+===> Writing src/controllers/my_first_nova_notes_api_controller.erl
+===> Writing priv/schemas/note.json
+```
+
+This gives us a controller with stub functions and a JSON schema that the [OpenAPI generator](../developer-tools/openapi.md) can pick up later. Now let's replace the stubs with our actual implementation.
+
+Create (or replace) `src/controllers/my_first_nova_notes_api_controller.erl`:
 
 ```erlang
 -module(my_first_nova_notes_api_controller).

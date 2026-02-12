@@ -108,7 +108,16 @@ Use `-ifdef(TEST)` to export helper functions only in test builds:
 
 Common Test is better for full-stack tests where you need the application running. `nova_test` provides an HTTP client that handles startup and port discovery.
 
-Create `test/my_first_nova_api_SUITE.erl`:
+You can scaffold a Common Test suite with the code generator:
+
+```shell
+rebar3 nova gen_test --name users
+===> Writing test/my_first_nova_users_controller_SUITE.erl
+```
+
+This creates a suite with test cases for each CRUD action that make HTTP requests against your running application. See [Code Generators](../developer-tools/code-generators.md) for the full details.
+
+Here is what a hand-written suite looks like using `nova_test`. Create `test/my_first_nova_api_SUITE.erl`:
 
 ```erlang
 -module(my_first_nova_api_SUITE).

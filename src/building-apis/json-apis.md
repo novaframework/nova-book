@@ -6,7 +6,15 @@ So far we have been rendering HTML views with ErlyDTL templates. Now let's build
 
 Instead of returning `{ok, Variables}` (which renders a template), return `{json, Data}` and Nova encodes it as JSON with the correct `Content-Type` header.
 
-Create `src/controllers/my_first_nova_api_controller.erl`:
+You can scaffold an API controller quickly with the code generator:
+
+```shell
+rebar3 nova gen_resource --name users --actions index,show,create
+```
+
+This generates a controller with stub functions, a JSON schema, and prints route definitions. See [Code Generators](../developer-tools/code-generators.md) for the full details.
+
+Let's write the controller by hand so we can see what each part does. Create `src/controllers/my_first_nova_api_controller.erl`:
 
 ```erlang
 -module(my_first_nova_api_controller).
