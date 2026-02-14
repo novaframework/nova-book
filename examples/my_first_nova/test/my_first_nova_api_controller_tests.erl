@@ -32,13 +32,17 @@ index_returns_users() ->
 
 show_existing_user() ->
     meck:expect(my_first_nova_repo, get, fun(user, 1) -> {ok, ?USER} end),
-    Req = nova_test_req:with_bindings(#{<<"id">> => <<"1">>}, nova_test_req:new(get, "/api/users/1")),
+    Req = nova_test_req:with_bindings(
+        #{<<"id">> => <<"1">>}, nova_test_req:new(get, "/api/users/1")
+    ),
     Result = my_first_nova_api_controller:show(Req),
     ?assertJsonResponse(#{id := 1, name := <<"Alice">>}, Result).
 
 show_missing_user() ->
     meck:expect(my_first_nova_repo, get, fun(user, 99) -> {error, not_found} end),
-    Req = nova_test_req:with_bindings(#{<<"id">> => <<"99">>}, nova_test_req:new(get, "/api/users/99")),
+    Req = nova_test_req:with_bindings(
+        #{<<"id">> => <<"99">>}, nova_test_req:new(get, "/api/users/99")
+    ),
     Result = my_first_nova_api_controller:show(Req),
     ?assertMatch({status, 404, _, _}, Result).
 

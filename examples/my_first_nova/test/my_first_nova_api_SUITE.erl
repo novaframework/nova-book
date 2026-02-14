@@ -38,11 +38,17 @@ products_crud(Config) ->
     ?assertJson(#{<<"products">> := []}, R1),
 
     %% Create
-    {ok, R2} = nova_test:post("/api/products", #{json => #{
-        <<"name">> => <<"Widget">>,
-        <<"price">> => 999,
-        <<"description">> => <<"A fine widget">>
-    }}, Config),
+    {ok, R2} = nova_test:post(
+        "/api/products",
+        #{
+            json => #{
+                <<"name">> => <<"Widget">>,
+                <<"price">> => 999,
+                <<"description">> => <<"A fine widget">>
+            }
+        },
+        Config
+    ),
     ?assertStatus(201, R2),
     #{<<"id">> := ProductId} = nova_test:json(R2),
 
@@ -52,10 +58,16 @@ products_crud(Config) ->
     ?assertJson(#{<<"name">> := <<"Widget">>, <<"price">> := 999}, R3),
 
     %% Update
-    {ok, R4} = nova_test:put("/api/products/" ++ integer_to_list(ProductId), #{json => #{
-        <<"name">> => <<"Super Widget">>,
-        <<"price">> => 1999
-    }}, Config),
+    {ok, R4} = nova_test:put(
+        "/api/products/" ++ integer_to_list(ProductId),
+        #{
+            json => #{
+                <<"name">> => <<"Super Widget">>,
+                <<"price">> => 1999
+            }
+        },
+        Config
+    ),
     ?assertStatus(200, R4),
     ?assertJson(#{<<"name">> := <<"Super Widget">>, <<"price">> := 1999}, R4),
 
@@ -83,10 +95,16 @@ users_crud(Config) ->
     ?assertJson(#{<<"users">> := []}, R1),
 
     %% Create
-    {ok, R2} = nova_test:post("/api/users", #{json => #{
-        <<"name">> => <<"Alice">>,
-        <<"email">> => <<"alice@example.com">>
-    }}, Config),
+    {ok, R2} = nova_test:post(
+        "/api/users",
+        #{
+            json => #{
+                <<"name">> => <<"Alice">>,
+                <<"email">> => <<"alice@example.com">>
+            }
+        },
+        Config
+    ),
     ?assertStatus(201, R2),
     #{<<"id">> := UserId} = nova_test:json(R2),
 

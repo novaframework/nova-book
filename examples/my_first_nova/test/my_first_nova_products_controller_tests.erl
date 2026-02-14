@@ -36,13 +36,17 @@ list_returns_products() ->
 
 show_existing_product() ->
     meck:expect(my_first_nova_repo, get, fun(product, 1) -> {ok, ?PRODUCT} end),
-    Req = nova_test_req:with_bindings(#{<<"id">> => <<"1">>}, nova_test_req:new(get, "/api/products/1")),
+    Req = nova_test_req:with_bindings(
+        #{<<"id">> => <<"1">>}, nova_test_req:new(get, "/api/products/1")
+    ),
     Result = my_first_nova_products_controller:show(Req),
     ?assertJsonResponse(#{id := 1, name := <<"Widget">>}, Result).
 
 show_missing_product() ->
     meck:expect(my_first_nova_repo, get, fun(product, 99) -> {error, not_found} end),
-    Req = nova_test_req:with_bindings(#{<<"id">> => <<"99">>}, nova_test_req:new(get, "/api/products/99")),
+    Req = nova_test_req:with_bindings(
+        #{<<"id">> => <<"99">>}, nova_test_req:new(get, "/api/products/99")
+    ),
     Result = my_first_nova_products_controller:show(Req),
     ?assertMatch({status, 404, _, _}, Result).
 
@@ -72,7 +76,9 @@ update_product() ->
     meck:expect(my_first_nova_repo, update, fun(_) -> {ok, Updated} end),
     Req = nova_test_req:with_json(
         #{<<"name">> => <<"Updated">>},
-        nova_test_req:with_bindings(#{<<"id">> => <<"1">>}, nova_test_req:new(put, "/api/products/1"))
+        nova_test_req:with_bindings(
+            #{<<"id">> => <<"1">>}, nova_test_req:new(put, "/api/products/1")
+        )
     ),
     Result = my_first_nova_products_controller:update(Req),
     ?assertJsonResponse(#{name := <<"Updated">>}, Result).
@@ -81,7 +87,9 @@ update_missing_product() ->
     meck:expect(my_first_nova_repo, get, fun(product, 99) -> {error, not_found} end),
     Req = nova_test_req:with_json(
         #{<<"name">> => <<"Nope">>},
-        nova_test_req:with_bindings(#{<<"id">> => <<"99">>}, nova_test_req:new(put, "/api/products/99"))
+        nova_test_req:with_bindings(
+            #{<<"id">> => <<"99">>}, nova_test_req:new(put, "/api/products/99")
+        )
     ),
     Result = my_first_nova_products_controller:update(Req),
     ?assertMatch({status, 404, _, _}, Result).

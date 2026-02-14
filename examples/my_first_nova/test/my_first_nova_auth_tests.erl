@@ -2,14 +2,24 @@
 -include_lib("eunit/include/eunit.hrl").
 
 valid_login_test() ->
-    Req = #{params => #{<<"username">> => <<"admin">>,
-                        <<"password">> => <<"password">>}},
-    ?assertMatch({true, #{authed := true, username := <<"admin">>}},
-                 my_first_nova_auth:username_password(Req)).
+    Req = #{
+        params => #{
+            <<"username">> => <<"admin">>,
+            <<"password">> => <<"password">>
+        }
+    },
+    ?assertMatch(
+        {true, #{authed := true, username := <<"admin">>}},
+        my_first_nova_auth:username_password(Req)
+    ).
 
 invalid_password_test() ->
-    Req = #{params => #{<<"username">> => <<"admin">>,
-                        <<"password">> => <<"wrong">>}},
+    Req = #{
+        params => #{
+            <<"username">> => <<"admin">>,
+            <<"password">> => <<"wrong">>
+        }
+    },
     ?assertEqual(false, my_first_nova_auth:username_password(Req)).
 
 missing_params_test() ->
