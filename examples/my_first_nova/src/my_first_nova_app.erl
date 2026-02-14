@@ -15,6 +15,8 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
+    my_first_nova_repo:start(),
+    kura_migrator:migrate(my_first_nova_repo),
     my_first_nova_sup:start_link().
 
 %%--------------------------------------------------------------------

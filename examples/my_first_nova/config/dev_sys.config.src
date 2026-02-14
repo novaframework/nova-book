@@ -29,5 +29,8 @@
                                                           read_urlencoded_body => true}}
                    ]}
         ]}
-  %% Please change your app.src-file instead if you intend to add app-specific configurations
+ },
+ {my_first_nova, [
+    {database, <<"my_first_nova_dev">>}
+ ]}
 ].
