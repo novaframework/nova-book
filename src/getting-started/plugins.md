@@ -10,7 +10,7 @@ Every HTTP request flows through a pipeline:
 2. The **controller** handles the request
 3. **Post-request plugins** run in order
 
-A plugin module implements the `nova_plugin` behaviour and exports `pre_request/2`, `post_request/2`, and `plugin_info/0`.
+A plugin module implements the `nova_plugin` behaviour and exports `pre_request/4`, `post_request/4`, and `plugin_info/0`.
 
 Here is an example — the `nova_correlation_plugin` that ships with Nova:
 
@@ -18,29 +18,29 @@ Here is an example — the `nova_correlation_plugin` that ships with Nova:
 -module(nova_correlation_plugin).
 -behaviour(nova_plugin).
 
--export([pre_request/2,
-         post_request/2,
+-export([pre_request/4,
+         post_request/4,
          plugin_info/0]).
 
-pre_request(Req0, Opts) ->
+pre_request(Req0, _Env, Opts, State) ->
     CorrId = get_correlation_id(Req0, Opts),
     ok = update_logger_metadata(CorrId, Opts),
     Req1 = cowboy_req:set_resp_header(<<"X-Correlation-ID">>, CorrId, Req0),
     Req = Req1#{correlation_id => CorrId},
-    {ok, Req}.
+    {ok, Req, State}.
 
-post_request(Req, _) ->
-    {ok, Req}.
+post_request(Req, _Env, _Opts, State) ->
+    {ok, Req, State}.
 
 plugin_info() ->
-   {<<"nova_correlation_plugin">>,
-    <<"0.2.0">>,
-    <<"Nova team <info@novaframework.org">>,
-    <<"Add X-Correlation-ID headers to response">>,
-    []}.
+    #{title => <<"nova_correlation_plugin">>,
+      version => <<"0.2.0">>,
+      url => <<"https://github.com/novaframework/nova">>,
+      authors => [<<"Nova team">>],
+      description => <<"Add X-Correlation-ID headers to response">>}.
 ```
 
-The `pre_request` callback picks up or generates a correlation ID and adds it to both the response headers and the request map. `post_request` is a no-op here.
+The `pre_request` callback picks up or generates a correlation ID and adds it to both the response headers and the request map. `post_request` is a no-op here. The `State` argument is global plugin state — see [Custom Plugins](../going-further/plugins-cors.md) for details on managing it with `init/0` and `stop/1`.
 
 ## Configuring plugins
 
