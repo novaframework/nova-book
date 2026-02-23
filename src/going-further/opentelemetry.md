@@ -24,6 +24,7 @@ Add `opentelemetry_nova` and the OpenTelemetry SDK to `rebar.config`:
 ```erlang
 {deps, [
     nova,
+    {kura, "~> 1.0"},
     {opentelemetry, "~> 1.5"},
     {opentelemetry_experimental, "~> 0.5"},
     {opentelemetry_exporter, "~> 1.8"},
@@ -90,7 +91,7 @@ In your application's `start/2`, initialize metrics and start the Prometheus HTT
 ```erlang
 start(_StartType, _StartArgs) ->
     opentelemetry_nova:setup(#{prometheus => #{port => 9464}}),
-    my_app_sup:start_link().
+    blog_sup:start_link().
 ```
 
 This starts a Prometheus endpoint at `http://localhost:9464/metrics`. Point your Prometheus server or Grafana Agent at it.
@@ -108,13 +109,29 @@ routes(_Environment) ->
     [#{
         plugins => [{pre_request, otel_nova_plugin, #{}}],
         routes => [
-            {"/hello", fun my_controller:hello/1, #{methods => [get]}},
-            {"/users", fun my_controller:users/1, #{methods => [get, post]}}
+            {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+            {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}}
         ]
     }].
 ```
 
-Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attributes, and the span name becomes `GET my_controller:hello` instead of just `HTTP GET`.
+Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attributes, and the span name becomes `GET blog_posts_controller:index` instead of just `HTTP GET`.
+
+## Kura query telemetry
+
+Kura has its own telemetry for database queries. Enable it in `sys.config`:
+
+```erlang
+{kura, [{log, true}]}
+```
+
+This logs every query with its SQL, parameters, duration, and row count. For custom handling, pass an `{M, F}` tuple:
+
+```erlang
+{kura, [{log, {blog_telemetry, log_query}}]}
+```
+
+Combined with OpenTelemetry HTTP spans, you get end-to-end visibility from the HTTP request through the database query and back.
 
 ## Full sys.config example
 
@@ -126,6 +143,8 @@ Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attribu
           stream_handlers => [otel_nova_stream_h, cowboy_stream_h]
       }}
   ]},
+
+  {kura, [{log, true}]},
 
   {opentelemetry, [
       {span_processor, batch},
@@ -157,8 +176,9 @@ Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attribu
 Make some requests:
 
 ```shell
-curl http://localhost:8080/hello
-curl -X POST -d '{"name":"nova"}' http://localhost:8080/users
+curl http://localhost:8080/api/posts
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"title":"Test","body":"Hello"}' http://localhost:8080/api/posts
 ```
 
 Check the Prometheus endpoint:

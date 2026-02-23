@@ -60,7 +60,7 @@ Each plugin entry is a tuple: `{Phase, Module, Options}` where Phase is `pre_req
 
 ## Setting up for our login form
 
-In the next chapters we will build a login form that sends URL-encoded data. To have Nova decode this automatically, update the plugin config in `dev_sys.config.src`:
+In the next chapter we will build a login form that sends URL-encoded data. To have Nova decode this automatically, update the plugin config in `dev_sys.config.src`:
 
 ```erlang
 {plugins, [
@@ -71,7 +71,7 @@ In the next chapters we will build a login form that sends URL-encoded data. To 
 With this setting, form POST data is decoded and placed in the `params` key of the request map, ready for your controller to use.
 
 ```admonish tip
-You can enable multiple decoders at once. We will add `decode_json_body => true` later when we build our [JSON API](../building-apis/json-apis.md).
+You can enable multiple decoders at once. We will add `decode_json_body => true` later when we build our [JSON API](../building-api/json-api.md).
 ```
 
 ## Built-in plugins
@@ -82,4 +82,4 @@ For now, the key one is `nova_request_plugin` — it handles JSON body decoding,
 
 ---
 
-With plugins configured to decode form data, we can now build our first [view](views.md) — a login page.
+With plugins configured to decode form data, we can now build our first [view and login page](views-auth-sessions.md).

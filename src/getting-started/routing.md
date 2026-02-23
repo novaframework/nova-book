@@ -4,10 +4,10 @@ In the previous chapter we created a Nova application and saw it running. Now le
 
 ## The router module
 
-When Nova generated our project, it created `my_first_nova_router.erl`:
+When Nova generated our project, it created `blog_router.erl`:
 
 ```erlang
--module(my_first_nova_router).
+-module(blog_router).
 -behaviour(nova_router).
 
 -export([
@@ -18,7 +18,7 @@ routes(_Environment) ->
     [#{prefix => "",
       security => false,
       routes => [
-                 {"/", fun my_first_nova_main_controller:index/1, #{methods => [get]}},
+                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
                  {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
                 ]
       }].
@@ -46,14 +46,14 @@ routes(_Environment) ->
   [#{prefix => "",
       security => false,
       routes => [
-                 {"/", fun my_first_nova_main_controller:index/1, #{methods => [get]}},
+                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
                  {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}},
-                 {"/login", fun my_first_nova_main_controller:login/1, #{methods => [get]}}
+                 {"/login", fun blog_main_controller:login/1, #{methods => [get]}}
                 ]
       }].
 ```
 
-We will implement the `login/1` function in the [Views](views.md) chapter.
+We will implement the `login/1` function in the [Views, Auth & Sessions](views-auth-sessions.md) chapter.
 
 ## Prefixes for grouping
 
@@ -63,8 +63,8 @@ The `prefix` key groups related routes under a common path. For example, to buil
 #{prefix => "/api/v1",
   security => false,
   routes => [
-             {"/users", fun my_api_controller:list_users/1, #{methods => [get]}},
-             {"/users/:id", fun my_api_controller:get_user/1, #{methods => [get]}}
+             {"/users", fun blog_api_controller:list_users/1, #{methods => [get]}},
+             {"/users/:id", fun blog_api_controller:get_user/1, #{methods => [get]}}
             ]
 }
 ```
@@ -85,7 +85,7 @@ prod_routes() ->
   [#{prefix => "",
       security => false,
       routes => [
-                 {"/", fun my_first_nova_main_controller:index/1, #{methods => [get]}},
+                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
                  {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
                 ]
       }].
@@ -94,7 +94,7 @@ dev_routes() ->
   [#{prefix => "",
      security => false,
      routes => [
-                {"/dev-tools", fun my_first_nova_dev_controller:index/1, #{methods => [get]}}
+                {"/dev-tools", fun blog_dev_controller:index/1, #{methods => [get]}}
                ]
   }].
 ```

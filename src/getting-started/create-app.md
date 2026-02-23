@@ -17,25 +17,25 @@ This checks for rebar3 (installing it if needed) and adds the `rebar3_nova` plug
 Rebar3's `new` command generates project scaffolding. With the Nova plugin installed, you have a `nova` template:
 
 ```shell
-rebar3 new nova my_first_nova
+rebar3 new nova blog
 ```
 
 This creates a directory with everything needed for a running Nova application:
 
 ```
-===> Writing my_first_nova/config/dev_sys.config.src
-===> Writing my_first_nova/config/prod_sys.config.src
-===> Writing my_first_nova/src/my_first_nova.app.src
-===> Writing my_first_nova/src/my_first_nova_app.erl
-===> Writing my_first_nova/src/my_first_nova_sup.erl
-===> Writing my_first_nova/src/my_first_nova_router.erl
-===> Writing my_first_nova/src/controllers/my_first_nova_main_controller.erl
-===> Writing my_first_nova/rebar.config
-===> Writing my_first_nova/config/vm.args.src
-===> Writing my_first_nova/priv/assets/favicon.ico
-===> Writing my_first_nova/src/views/my_first_nova_main.dtl
-===> Writing my_first_nova/.tool-versions
-===> Writing my_first_nova/.gitignore
+===> Writing blog/config/dev_sys.config.src
+===> Writing blog/config/prod_sys.config.src
+===> Writing blog/src/blog.app.src
+===> Writing blog/src/blog_app.erl
+===> Writing blog/src/blog_sup.erl
+===> Writing blog/src/blog_router.erl
+===> Writing blog/src/controllers/blog_main_controller.erl
+===> Writing blog/rebar.config
+===> Writing blog/config/vm.args.src
+===> Writing blog/priv/assets/favicon.ico
+===> Writing blog/src/views/blog_main.dtl
+===> Writing blog/.tool-versions
+===> Writing blog/.gitignore
 ```
 
 ```admonish tip
@@ -49,9 +49,9 @@ Here is what was generated:
 - **`src/`** — Your source code
   - **`src/controllers/`** — Controller modules that handle request logic
   - **`src/views/`** — ErlyDTL (Django-style) templates for HTML rendering
-  - **`my_first_nova_router.erl`** — Route definitions
-  - **`my_first_nova_app.erl`** — OTP application callback
-  - **`my_first_nova_sup.erl`** — Supervisor
+  - **`blog_router.erl`** — Route definitions
+  - **`blog_app.erl`** — OTP application callback
+  - **`blog_sup.erl`** — Supervisor
 - **`config/`** — Configuration files
   - **`dev_sys.config.src`** — Development config (used by `rebar3 shell`)
   - **`prod_sys.config.src`** — Production config (used in releases)
@@ -63,7 +63,7 @@ Here is what was generated:
 Start the development server:
 
 ```shell
-cd my_first_nova
+cd blog
 rebar3 nova serve
 ```
 
@@ -96,8 +96,8 @@ rebar3 nova routes
 ```
 Host: '_'
      ├─  /assets
-        └─  _ /[...] (my_first_nova, cowboy_static:init/1)
-     └─  GET / (my_first_nova, my_first_nova_main_controller:index/1)
+        └─  _ /[...] (blog, cowboy_static:init/1)
+     └─  GET / (blog, blog_main_controller:index/1)
 ```
 
 This shows the static asset handler and the index route that renders the welcome page.

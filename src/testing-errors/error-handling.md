@@ -14,14 +14,14 @@ Nova lets you register custom handlers for specific HTTP status codes directly i
 routes(_Environment) ->
   [
     #{routes => [
-        {404, fun my_first_nova_error_controller:not_found/1, #{}},
-        {500, fun my_first_nova_error_controller:server_error/1, #{}}
+        {404, fun blog_error_controller:not_found/1, #{}},
+        {500, fun blog_error_controller:server_error/1, #{}}
      ]},
 
     #{prefix => "",
       security => false,
       routes => [
-                 {"/", fun my_first_nova_main_controller:index/1, #{methods => [get]}},
+                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
                  {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
                 ]
     }
@@ -32,10 +32,10 @@ Your status code handlers override Nova's defaults because your routes are compi
 
 ## Creating an error controller
 
-Create `src/controllers/my_first_nova_error_controller.erl`:
+Create `src/controllers/blog_error_controller.erl`:
 
 ```erlang
--module(my_first_nova_error_controller).
+-module(blog_error_controller).
 -export([
          not_found/1,
          server_error/1
@@ -85,6 +85,30 @@ not_found(Req) ->
     end.
 ```
 
+## Rendering changeset errors as JSON
+
+When using Kura, changeset validation errors are structured data. A helper function makes it easy to return them as JSON:
+
+```erlang
+changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
+    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+```
+
+Use it in your controllers:
+
+```erlang
+create(#{params := Params}) ->
+    CS = post:changeset(#{}, Params),
+    case blog_repo:insert(CS) of
+        {ok, Post} ->
+            {json, 201, #{}, post_to_json(Post)};
+        {error, #kura_changeset{} = CS1} ->
+            {json, 422, #{}, #{errors => changeset_errors_to_json(CS1)}}
+    end.
+```
+
+This returns errors like `{"errors": {"title": "can't be blank", "email": "has already been taken"}}`.
+
 ## Handling controller crashes
 
 When a controller crashes, Nova catches the exception and triggers the 500 handler. The request map passed to your error controller will contain `crash_info`:
@@ -107,11 +131,11 @@ Register handlers for any HTTP status code:
 
 ```erlang
 #{routes => [
-    {400, fun my_first_nova_error_controller:bad_request/1, #{}},
-    {401, fun my_first_nova_error_controller:unauthorized/1, #{}},
-    {403, fun my_first_nova_error_controller:forbidden/1, #{}},
-    {404, fun my_first_nova_error_controller:not_found/1, #{}},
-    {500, fun my_first_nova_error_controller:server_error/1, #{}}
+    {400, fun blog_error_controller:bad_request/1, #{}},
+    {401, fun blog_error_controller:unauthorized/1, #{}},
+    {403, fun blog_error_controller:forbidden/1, #{}},
+    {404, fun blog_error_controller:not_found/1, #{}},
+    {500, fun blog_error_controller:server_error/1, #{}}
  ]}
 ```
 
@@ -143,8 +167,8 @@ For each case, Nova looks up your registered status code handler. If none is reg
 If a controller returns an unrecognized value, Nova can delegate to a fallback controller:
 
 ```erlang
--module(my_first_nova_api_controller).
--fallback_controller(my_first_nova_error_controller).
+-module(blog_posts_controller).
+-fallback_controller(blog_error_controller).
 
 index(_Req) ->
     case do_something() of
@@ -173,4 +197,4 @@ To skip Nova's error page rendering entirely:
 
 ---
 
-With error handling in place, our application is more robust. Let's look at how to compose larger applications with [sub-applications](sub-applications.md).
+With error handling in place, our application is more robust. Next, let's add real-time features with [WebSockets](../production/websockets.md).

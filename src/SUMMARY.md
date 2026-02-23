@@ -9,38 +9,37 @@
 - [Create a New Application](getting-started/create-app.md)
 - [Routing](getting-started/routing.md)
 - [Plugins](getting-started/plugins.md)
-- [Views](getting-started/views.md)
-- [Authentication](getting-started/authentication.md)
-- [Sessions](getting-started/sessions.md)
+- [Views, Auth & Sessions](getting-started/views-auth-sessions.md)
 
-# Building APIs
+# Data Layer with Kura
 
-- [JSON APIs](building-apis/json-apis.md)
-- [WebSockets](building-apis/websockets.md)
+- [Database Setup](data-layer/setup.md)
+- [Schemas and Migrations](data-layer/schemas-migrations.md)
+- [Changesets and Validation](data-layer/changesets.md)
+- [CRUD with the Repository](data-layer/crud.md)
 
-# Data and Testing
+# Building the API
 
-- [Database Integration](data-and-testing/database-integration.md)
-- [Testing](data-and-testing/testing.md)
+- [JSON API with Generators](building-api/json-api.md)
+- [Associations and Preloading](building-api/associations.md)
+- [Tags, Many-to-Many & Embedded Schemas](building-api/advanced-data.md)
 
-# Building a Complete Application
+# Testing and Error Handling
 
-- [CRUD Application](building-app/crud-app.md)
-- [Error Handling](building-app/error-handling.md)
-- [Sub-Applications](building-app/sub-applications.md)
-- [Deployment](building-app/deployment.md)
+- [Testing](testing-errors/testing.md)
+- [Error Handling](testing-errors/error-handling.md)
 
-# Developer Tools
+# Real-Time and Production
 
-- [Code Generators](developer-tools/code-generators.md)
-- [OpenAPI & API Documentation](developer-tools/openapi.md)
-- [Inspection & Audit Tools](developer-tools/inspection-tools.md)
+- [WebSockets](production/websockets.md)
+- [Pub/Sub and Real-Time Feed](production/pubsub.md)
+- [Transactions, Multi & Bulk Operations](production/transactions-bulk.md)
+- [Deployment](production/deployment.md)
 
 # Going Further
 
-- [Pub/Sub](going-further/pubsub.md)
-- [Custom Plugins](going-further/custom-plugins.md)
-- [CORS](going-further/cors.md)
+- [OpenAPI, Inspection & Audit](going-further/openapi-tools.md)
+- [Custom Plugins and CORS](going-further/plugins-cors.md)
 - [OpenTelemetry](going-further/opentelemetry.md)
 
 ---
