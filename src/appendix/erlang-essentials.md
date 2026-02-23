@@ -89,9 +89,9 @@ handle(#{method := <<"GET">>} = Req) -> get_handler(Req);
 handle(#{method := <<"POST">>} = Req) -> post_handler(Req).
 
 %% Case expression
-case pgo:query("SELECT ...") of
-    #{rows := [Row]} -> {ok, Row};
-    #{rows := []}     -> {error, not_found}
+case blog_repo:get(post, Id) of
+    {ok, Post}         -> handle_post(Post);
+    {error, not_found} -> not_found
 end.
 ```
 
@@ -140,7 +140,7 @@ An OTP application is a component with a defined start/stop lifecycle. Your Nova
 
 ### Supervisors
 
-Supervisors manage child processes and restart them if they crash. The generated `my_first_nova_sup.erl` is your application's supervisor.
+Supervisors manage child processes and restart them if they crash. The generated `blog_sup.erl` is your application's supervisor.
 
 ### gen_server
 

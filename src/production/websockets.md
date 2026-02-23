@@ -1,15 +1,15 @@
 # WebSockets
 
-HTTP request-response works well for most operations, but sometimes you need real-time, bidirectional communication. Nova has built-in WebSocket support through the `nova_websocket` behaviour.
+HTTP request-response works well for most operations, but sometimes you need real-time, bidirectional communication. Nova has built-in WebSocket support through the `nova_websocket` behaviour. We will use it to build a live comments handler for our blog.
 
 ## Creating a WebSocket handler
 
 A WebSocket handler implements three callbacks: `init/1`, `websocket_handle/2`, and `websocket_info/2`.
 
-Create `src/controllers/my_first_nova_ws_handler.erl`:
+Create `src/controllers/blog_ws_handler.erl`:
 
 ```erlang
--module(my_first_nova_ws_handler).
+-module(blog_ws_handler).
 -behaviour(nova_websocket).
 
 -export([
@@ -41,7 +41,7 @@ The callbacks:
 WebSocket routes use the module name as an atom (not a fun reference) and set `protocol => ws`:
 
 ```erlang
-{"/ws", my_first_nova_ws_handler, #{protocol => ws}}
+{"/ws", blog_ws_handler, #{protocol => ws}}
 ```
 
 Add it to your public routes:
@@ -50,9 +50,9 @@ Add it to your public routes:
 #{prefix => "",
   security => false,
   routes => [
-             {"/login", fun my_first_nova_main_controller:login/1, #{methods => [get]}},
+             {"/login", fun blog_main_controller:login/1, #{methods => [get]}},
              {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}},
-             {"/ws", my_first_nova_ws_handler, #{protocol => ws}}
+             {"/ws", blog_ws_handler, #{protocol => ws}}
             ]
 }
 ```
@@ -68,14 +68,14 @@ ws.onopen = () => ws.send("Hello Nova!");
 // Should log: "Echo: Hello Nova!"
 ```
 
-## A chat handler
+## A live comments handler
 
-Let's build something more practical — a chat handler that broadcasts messages to all connected clients using `nova_pubsub`.
+Let's build something more practical — a handler that broadcasts new comments to all connected clients using `nova_pubsub`.
 
-Create `src/controllers/my_first_nova_chat_handler.erl`:
+Create `src/controllers/blog_comments_ws_handler.erl`:
 
 ```erlang
--module(my_first_nova_chat_handler).
+-module(blog_comments_ws_handler).
 -behaviour(nova_websocket).
 
 -export([
@@ -85,22 +85,22 @@ Create `src/controllers/my_first_nova_chat_handler.erl`:
         ]).
 
 init(State) ->
-    nova_pubsub:join(chat),
+    nova_pubsub:join(comments),
     {ok, State}.
 
 websocket_handle({text, Msg}, State) ->
-    nova_pubsub:broadcast(chat, "message", Msg),
+    nova_pubsub:broadcast(comments, "new_comment", Msg),
     {ok, State};
 websocket_handle(_Frame, State) ->
     {ok, State}.
 
-websocket_info({nova_pubsub, chat, _Sender, "message", Msg}, State) ->
+websocket_info({nova_pubsub, comments, _Sender, "new_comment", Msg}, State) ->
     {reply, {text, Msg}, State};
 websocket_info(_Info, State) ->
     {ok, State}.
 ```
 
-In `init/1` we join the `chat` channel. When a client sends a message, we broadcast it to all channel members. When a pub/sub message arrives via `websocket_info/2`, we forward it to the connected client. We will explore pub/sub in depth in the [Pub/Sub](../going-further/pubsub.md) chapter.
+In `init/1` we join the `comments` channel. When a client sends a message, we broadcast it to all channel members. When a pub/sub message arrives via `websocket_info/2`, we forward it to the connected client. We will explore pub/sub in depth in the [Pub/Sub](pubsub.md) chapter.
 
 ## Custom handlers
 
@@ -155,4 +155,4 @@ resolve(Req, InvalidReturn) ->
 
 ---
 
-We have covered HTML, JSON, and WebSocket responses. Now let's persist data with [database integration](../data-and-testing/database-integration.md).
+With WebSockets in place, let's build a real-time comment feed using [Pub/Sub](pubsub.md).

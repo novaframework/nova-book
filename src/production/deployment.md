@@ -7,8 +7,8 @@ In development we use `rebar3 nova serve` with hot-reloading and debug logging. 
 Rebar3 uses `relx` to build releases. The generated `rebar.config` includes a release configuration:
 
 ```erlang
-{relx, [{release, {my_first_nova, "0.1.0"},
-         [my_first_nova,
+{relx, [{release, {blog, "0.1.0"},
+         [blog,
           sasl]},
         {dev_mode, true},
         {include_erts, false},
@@ -65,7 +65,7 @@ Key differences:
          {environment, prod},
          {cowboy_configuration, #{port => 8080}},
          {dev_mode, false},
-         {bootstrap_application, my_first_nova},
+         {bootstrap_application, blog},
          {plugins, [
                     {pre_request, nova_request_plugin, #{
                         decode_json_body => true,
@@ -73,9 +73,9 @@ Key differences:
                     }}
                    ]}
         ]},
-  {my_first_nova, [
-      {db, #{
-          host => "${DB_HOST}",
+  {blog, [
+      {repo, #{
+          hostname => "${DB_HOST}",
           port => 5432,
           database => "${DB_NAME}",
           username => "${DB_USER}",
@@ -96,7 +96,7 @@ Key differences:
 `config/vm.args.src` controls Erlang VM settings. For production:
 
 ```
--name my_first_nova@${HOSTNAME}
+-name blog@${HOSTNAME}
 -setcookie ${RELEASE_COOKIE}
 +K true
 +A30
@@ -121,34 +121,34 @@ If you have JSON schemas in `priv/schemas/`, you can use `nova release` instead.
 rebar3 nova release
 ===> Generated priv/assets/openapi.json
 ===> Generated priv/assets/swagger.html
-===> Release successfully assembled: _build/prod/rel/my_first_nova
+===> Release successfully assembled: _build/prod/rel/blog
 ```
 
-This ensures your deployed application always ships with up-to-date API documentation. See [OpenAPI & API Documentation](../developer-tools/openapi.md) for details.
+This ensures your deployed application always ships with up-to-date API documentation. See [OpenAPI, Inspection & Audit](../going-further/openapi-tools.md) for details.
 
 Start it:
 
 ```shell
-_build/prod/rel/my_first_nova/bin/my_first_nova foreground
+_build/prod/rel/blog/bin/blog foreground
 ```
 
 Or as a daemon:
 
 ```shell
-_build/prod/rel/my_first_nova/bin/my_first_nova daemon
+_build/prod/rel/blog/bin/blog daemon
 ```
 
 Other commands:
 
 ```shell
 # Check if the node is running
-_build/prod/rel/my_first_nova/bin/my_first_nova ping
+_build/prod/rel/blog/bin/blog ping
 
 # Attach a remote shell
-_build/prod/rel/my_first_nova/bin/my_first_nova remote_console
+_build/prod/rel/blog/bin/blog remote_console
 
 # Stop the node
-_build/prod/rel/my_first_nova/bin/my_first_nova stop
+_build/prod/rel/blog/bin/blog stop
 ```
 
 ## Building a tarball
@@ -159,13 +159,13 @@ For deployment to another machine:
 rebar3 as prod tar
 ```
 
-This creates `my_first_nova-0.1.0.tar.gz`. Since ERTS is included, the target server does not need Erlang installed:
+This creates `blog-0.1.0.tar.gz`. Since ERTS is included, the target server does not need Erlang installed:
 
 ```shell
 # On the server
-mkdir -p /opt/my_first_nova
-tar -xzf my_first_nova-0.1.0.tar.gz -C /opt/my_first_nova
-/opt/my_first_nova/bin/my_first_nova daemon
+mkdir -p /opt/blog
+tar -xzf blog-0.1.0.tar.gz -C /opt/blog
+/opt/blog/bin/blog daemon
 ```
 
 ## SSL/TLS
@@ -178,8 +178,8 @@ Configure HTTPS in Nova:
         use_ssl => true,
         ssl_port => 8443,
         ssl_options => #{
-            certfile => "/etc/letsencrypt/live/myapp.com/fullchain.pem",
-            keyfile => "/etc/letsencrypt/live/myapp.com/privkey.pem"
+            certfile => "/etc/letsencrypt/live/myblog.com/fullchain.pem",
+            keyfile => "/etc/letsencrypt/live/myblog.com/privkey.pem"
         }
     }}
 ]}
@@ -193,21 +193,21 @@ Run as a system service:
 
 ```ini
 [Unit]
-Description=My First Nova Application
+Description=Blog Application
 After=network.target postgresql.service
 
 [Service]
 Type=forking
-User=nova
-Group=nova
-WorkingDirectory=/opt/my_first_nova
-ExecStart=/opt/my_first_nova/bin/my_first_nova daemon
-ExecStop=/opt/my_first_nova/bin/my_first_nova stop
+User=blog
+Group=blog
+WorkingDirectory=/opt/blog
+ExecStart=/opt/blog/bin/blog daemon
+ExecStop=/opt/blog/bin/blog stop
 Restart=on-failure
 RestartSec=5
 Environment=DB_HOST=localhost
-Environment=DB_NAME=my_first_nova_prod
-Environment=DB_USER=nova
+Environment=DB_NAME=blog_prod
+Environment=DB_USER=blog
 Environment=DB_PASSWORD=secret
 Environment=RELEASE_COOKIE=my_secret_cookie
 
@@ -217,8 +217,8 @@ WantedBy=multi-user.target
 
 ```shell
 sudo systemctl daemon-reload
-sudo systemctl enable my_first_nova
-sudo systemctl start my_first_nova
+sudo systemctl enable blog
+sudo systemctl start blog
 ```
 
 ## Docker
@@ -226,7 +226,7 @@ sudo systemctl start my_first_nova
 A multi-stage Dockerfile:
 
 ```dockerfile
-FROM erlang:26 AS builder
+FROM erlang:27 AS builder
 
 WORKDIR /app
 COPY . .
@@ -238,24 +238,28 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y libssl3 libncurses6 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/_build/prod/rel/my_first_nova/*.tar.gz .
+COPY --from=builder /app/_build/prod/rel/blog/*.tar.gz .
 RUN tar -xzf *.tar.gz && rm *.tar.gz
 
 EXPOSE 8080
 
-CMD ["/app/bin/my_first_nova", "foreground"]
+CMD ["/app/bin/blog", "foreground"]
 ```
 
 Build and run:
 
 ```shell
-docker build -t my_first_nova .
+docker build -t blog .
 docker run -p 8080:8080 \
   -e DB_HOST=host.docker.internal \
-  -e DB_NAME=my_first_nova_prod \
-  -e DB_USER=nova \
+  -e DB_NAME=blog_prod \
+  -e DB_USER=blog \
   -e DB_PASSWORD=secret \
-  my_first_nova
+  blog
+```
+
+```admonish tip
+For sub-applications like Nova Admin, add them to your release deps and `nova_apps` config. They are bundled automatically in the release. See [Custom Plugins and CORS](../going-further/plugins-cors.md) for plugin configuration that carries over to production.
 ```
 
 ## Summary
@@ -271,4 +275,4 @@ OTP releases are self-contained — once built, everything you need is in a sing
 
 ---
 
-Our application is deployed. Now let's explore more advanced features, starting with [pub/sub](../going-further/pubsub.md).
+Now let's explore more advanced features, starting with [OpenAPI, Inspection & Audit](../going-further/openapi-tools.md).
