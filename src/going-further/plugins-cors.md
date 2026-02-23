@@ -4,7 +4,9 @@ In the [Plugins](../getting-started/plugins.md) chapter we saw how Nova's built-
 
 ## The nova_plugin behaviour
 
-A plugin module implements these callbacks:
+Every callback in `nova_plugin` is optional — implement only what you need. A plugin registered as `pre_request` must export `pre_request/4`; one registered as `post_request` must export `post_request/4`.
+
+### Request callbacks
 
 ```erlang
 -callback pre_request(Req, Env, Options, State) ->
@@ -20,8 +22,59 @@ A plugin module implements these callbacks:
     {error, Reason}.
 
 -callback plugin_info() ->
-    {Title, Version, Author, Description, Options}.
+    #{title := binary(), version := binary(), url := binary(),
+      authors := [binary()], description := binary(),
+      options => [{atom(), binary()}]}.
 ```
+
+### Lifecycle callbacks: init/0 and stop/1
+
+Two optional callbacks manage **global, long-lived state** that persists across requests:
+
+```erlang
+-callback init() -> State :: any().
+-callback stop(State :: any()) -> ok.
+```
+
+`init/0` is called once when the plugin is loaded. The state it returns is passed as the `State` argument to every `pre_request/4` and `post_request/4` call. `stop/1` is called when the application shuts down and receives the current state for cleanup.
+
+This is useful when a plugin needs a long-lived resource — an ETS table, a connection pool reference, or a background process:
+
+```erlang
+-module(blog_stats_plugin).
+-behaviour(nova_plugin).
+
+-export([init/0,
+         stop/1,
+         pre_request/4,
+         post_request/4,
+         plugin_info/0]).
+
+init() ->
+    Tab = ets:new(request_stats, [public, set]),
+    ets:insert(Tab, {total_requests, 0}),
+    #{table => Tab}.
+
+stop(#{table := Tab}) ->
+    ets:delete(Tab),
+    ok.
+
+pre_request(Req, _Env, _Options, #{table := Tab} = State) ->
+    ets:update_counter(Tab, total_requests, 1),
+    {ok, Req, State}.
+
+post_request(Req, _Env, _Options, State) ->
+    {ok, Req, State}.
+
+plugin_info() ->
+    #{title => <<"blog_stats_plugin">>,
+      version => <<"1.0.0">>,
+      url => <<"https://github.com/novaframework/nova">>,
+      authors => [<<"Blog">>],
+      description => <<"Tracks total request count in ETS">>}.
+```
+
+Without `init/0`, the plugin state starts as `undefined`. Without `stop/1`, no cleanup runs on shutdown.
 
 ## Example: Request logger
 
