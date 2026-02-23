@@ -6,9 +6,9 @@
 
 ## Who this book is for
 
-This book is for experienced web developers who want to build web applications with Erlang. You should be comfortable with at least one other web framework (Express, Rails, Django, Phoenix, etc.) and understand HTTP, REST, and basic database concepts.
+This book is for anyone who wants to build web applications with Erlang — whether you are an experienced developer exploring a new stack or a newcomer picking up Erlang for the first time. If you have built anything with another web framework (Express, Rails, Django, Phoenix, etc.) you will feel right at home, but it is not a requirement. Basic familiarity with HTTP and databases is enough to get started.
 
-You do not need prior Erlang experience. The [Erlang Essentials](appendix/erlang-essentials.md) appendix provides a quick reference and links to learning resources. That said, working through the first few chapters of [Learn You Some Erlang](https://learnyousomeerlang.com/) before starting will make everything smoother.
+No prior Erlang experience is needed. The [Erlang Essentials](appendix/erlang-essentials.md) appendix covers the language fundamentals you will use throughout the book, and [Learn You Some Erlang](https://learnyousomeerlang.com/) is an excellent free companion if you want a deeper introduction. You can start the book right away and refer back to these resources as you go.
 
 ## What you'll build
 
