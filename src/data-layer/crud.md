@@ -149,7 +149,7 @@ show(#{bindings := #{<<"id">> := Id}}) ->
             {status, 404, #{}, #{error => <<"post not found">>}}
     end.
 
-create(#{params := Params}) ->
+create(#{json := Params}) ->
     CS = post:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Post} ->
@@ -160,7 +160,7 @@ create(#{params := Params}) ->
 create(_Req) ->
     {status, 422, #{}, #{error => <<"request body required">>}}.
 
-update(#{bindings := #{<<"id">> := Id}, params := Params}) ->
+update(#{bindings := #{<<"id">> := Id}, json := Params}) ->
     case blog_repo:get(post, binary_to_integer(Id)) of
         {ok, Post} ->
             CS = post:changeset(Post, Params),

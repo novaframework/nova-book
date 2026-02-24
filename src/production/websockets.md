@@ -128,7 +128,7 @@ my_action(_Req) ->
     {xml, <<"<user><name>Alice</name></user>">>}.
 ```
 
-The handler function receives `(StatusCode, ExtraHeaders, ControllerPayload)` and must return a Cowboy request.
+The handler function receives `(ReturnTuple, CallbackFun, Req)` where `ReturnTuple` is the full controller return value. It must return `{ok, Req2}`.
 
 ## Fallback controllers
 

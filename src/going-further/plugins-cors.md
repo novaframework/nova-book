@@ -105,11 +105,11 @@ post_request(Req, _Env, _Options, State) ->
     {ok, Req, State}.
 
 plugin_info() ->
-    {<<"blog_logger_plugin">>,
-     <<"1.0.0">>,
-     <<"Blog">>,
-     <<"Logs request method, path and duration">>,
-     []}.
+    #{title => <<"blog_logger_plugin">>,
+      version => <<"1.0.0">>,
+      url => <<"https://github.com/novaframework/nova">>,
+      authors => [<<"Blog">>],
+      description => <<"Logs request method, path and duration">>}.
 ```
 
 Register it as both pre-request and post-request in `sys.config`:
@@ -169,11 +169,13 @@ post_request(Req, _Env, _Options, State) ->
     {ok, Req, State}.
 
 plugin_info() ->
-    {<<"blog_rate_limit_plugin">>,
-     <<"1.0.0">>,
-     <<"Blog">>,
-     <<"Simple IP-based rate limiting">>,
-     [max_requests, window_ms]}.
+    #{title => <<"blog_rate_limit_plugin">>,
+      version => <<"1.0.0">>,
+      url => <<"https://github.com/novaframework/nova">>,
+      authors => [<<"Blog">>],
+      description => <<"Simple IP-based rate limiting">>,
+      options => [{max_requests, <<"Max requests per window">>},
+                  {window_ms, <<"Window duration in milliseconds">>}]}.
 ```
 
 Create the ETS table on application start in `src/blog_app.erl`:
@@ -290,11 +292,16 @@ post_request(Req, _Env, _Options, State) ->
     {ok, Req, State}.
 
 plugin_info() ->
-    {<<"blog_cors_plugin">>,
-     <<"1.0.0">>,
-     <<"Blog">>,
-     <<"Configurable CORS plugin">>,
-     [allow_origins, allow_methods, allow_headers, max_age, allow_credentials]}.
+    #{title => <<"blog_cors_plugin">>,
+      version => <<"1.0.0">>,
+      url => <<"https://github.com/novaframework/nova">>,
+      authors => [<<"Blog">>],
+      description => <<"Configurable CORS plugin">>,
+      options => [{allow_origins, <<"Allowed origins">>},
+                  {allow_methods, <<"Allowed HTTP methods">>},
+                  {allow_headers, <<"Allowed headers">>},
+                  {max_age, <<"Preflight cache duration">>},
+                  {allow_credentials, <<"Allow credentials">>}]}.
 ```
 
 Configure with all options:

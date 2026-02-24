@@ -97,7 +97,7 @@ changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
 Use it in your controllers:
 
 ```erlang
-create(#{params := Params}) ->
+create(#{json := Params}) ->
     CS = post:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Post} ->
