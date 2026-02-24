@@ -50,12 +50,13 @@ This creates `src/blog_repo.erl` — a module that wraps all database operations
          preload/3, transaction/1, multi/1, query/2]).
 
 config() ->
-    #{pool => blog_repo,
-      database => <<"blog_dev">>,
+    Database = application:get_env(blog, database, <<"blog_dev">>),
+    #{pool => ?MODULE,
+      database => Database,
       hostname => <<"localhost">>,
       port => 5432,
       username => <<"postgres">>,
-      password => <<>>,
+      password => <<"postgres">>,
       pool_size => 10}.
 
 start() -> kura_repo_worker:start(?MODULE).
@@ -76,7 +77,7 @@ multi(Multi) -> kura_repo_worker:multi(?MODULE, Multi).
 query(SQL, Params) -> kura_repo_worker:query(?MODULE, SQL, Params).
 ```
 
-Every function delegates to `kura_repo_worker` with the repo module as the first argument. The `config/0` callback tells Kura how to connect to PostgreSQL.
+The `kura_repo` behaviour only requires one callback — `config/0` — which tells Kura how to connect to PostgreSQL. Every other function is a convenience delegation to `kura_repo_worker`.
 
 The setup command also creates `src/migrations/` for migration files.
 
@@ -109,7 +110,9 @@ docker compose up -d
 
 ## Configuring the repo
 
-Update `config/dev_sys.config.src` to include the repo config. The repo module reads its config from `config/0`, but you can also configure it through `sys.config` if you prefer environment variable substitution:
+Notice that `config/0` uses `application:get_env(blog, database, <<"blog_dev">>)` for the database name. This means you can override it per environment through `sys.config` without touching the module.
+
+For example, to use a separate test database, add a `blog` section to your test sys.config:
 
 ```erlang
 [
@@ -138,9 +141,14 @@ Update `config/dev_sys.config.src` to include the repo config. The repo module r
                         decode_json_body => true
                     }}
                    ]}
+        ]},
+  {blog, [
+         {database, <<"blog_test">>}
         ]}
 ].
 ```
+
+The `blog_dev` default in `config/0` works for development without any sys.config entry. Override just the keys you need per environment.
 
 ## Starting the repo in the supervisor
 
@@ -158,10 +166,15 @@ start_link() ->
 
 init([]) ->
     blog_repo:start(),
+    kura_migrator:migrate(blog_repo),
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, []}}.
 ```
 
-`blog_repo:start()` creates the pgo connection pool using the config from `config/0`.
+`blog_repo:start()` creates the pgo connection pool using the config from `config/0`. `kura_migrator:migrate/1` then runs any pending migrations — it tracks which versions have been applied in a `schema_migrations` table.
+
+```admonish tip
+Auto-migrating on startup is convenient during development. For production, run migrations as a separate step before deploying (e.g. a release command or CI job) so that failures don't prevent the application from starting.
+```
 
 ## Adding the rebar3_kura compile hook
 
@@ -169,11 +182,11 @@ To get automatic migration generation (covered in the next chapter), add a provi
 
 ```erlang
 {provider_hooks, [
-    {post, [{compile, {kura, compile}}]}
+    {pre, [{compile, {kura, compile}}]}
 ]}.
 ```
 
-This runs `rebar3 kura compile` after every `rebar3 compile`, scanning your schemas and generating migrations for any changes.
+This runs `rebar3 kura compile` before every `rebar3 compile`, scanning your schemas and generating migrations for any changes.
 
 ## Verifying the connection
 
@@ -186,11 +199,11 @@ rebar3 nova serve
 You should see the application start without errors. If the database is unreachable, you will see a connection error in the logs. Verify from the shell:
 
 ```erlang
-1> blog_repo:query("SELECT 1", []).
-{ok, #{command => select, num_rows => 1, rows => [{1}]}}
+1> blog_repo:query("SELECT 1 AS result", []).
+{ok, [#{result => 1}]}
 ```
 
-Two commands and you have a database layer.
+`query/2` returns `{ok, Rows}` where each row is a map with atom keys — the same format you will see from all Kura query functions.
 
 ---
 
