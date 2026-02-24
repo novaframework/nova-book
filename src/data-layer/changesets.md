@@ -82,7 +82,7 @@ fields() ->
 changeset(Data, Params) ->
     CS = kura_changeset:cast(user, Data, Params, [username, email, password_hash]),
     CS1 = kura_changeset:validate_required(CS, [username, email, password_hash]),
-    CS2 = kura_changeset:validate_format(CS1, email, "^[^@]+@[^@]+\\.[^@]+$"),
+    CS2 = kura_changeset:validate_format(CS1, email, <<"^[^@]+@[^@]+\\.[^@]+$">>),
     CS3 = kura_changeset:validate_length(CS2, username, [{min, 2}, {max, 50}]),
     CS4 = kura_changeset:unique_constraint(CS3, email),
     kura_changeset:unique_constraint(CS4, username).
@@ -130,7 +130,7 @@ changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
 Use it in controllers:
 
 ```erlang
-create(#{params := Params}) ->
+create(#{json := Params}) ->
     CS = post:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Post} ->

@@ -82,7 +82,7 @@ On connect, the handler joins both the `posts` and `comments` channels. Any pub/
 Update the posts controller to broadcast on changes:
 
 ```erlang
-create(#{params := Params}) ->
+create(#{json := Params}) ->
     CS = post:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Post} ->

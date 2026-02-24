@@ -249,7 +249,7 @@ CS = kura_changeset:cast(SchemaModule, ExistingData, Params, AllowedFields).
 
 %% Validations
 kura_changeset:validate_required(CS, [field1, field2])
-kura_changeset:validate_format(CS, field, "regex")
+kura_changeset:validate_format(CS, field, <<"regex">>)
 kura_changeset:validate_length(CS, field, [{min, 3}, {max, 200}])
 kura_changeset:validate_number(CS, field, [{greater_than, 0}])
 kura_changeset:validate_inclusion(CS, field, [val1, val2, val3])

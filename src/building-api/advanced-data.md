@@ -265,7 +265,7 @@ index(_Req) ->
     {ok, Tags} = blog_repo:all(Q1),
     {json, #{tags => Tags}}.
 
-create(#{params := Params}) ->
+create(#{json := Params}) ->
     CS = tag:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Tag} ->

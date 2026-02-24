@@ -136,15 +136,15 @@ Test your security functions directly:
 
 valid_login_test() ->
     Req = nova_test_req:new(post, "/login"),
-    Req1 = nova_test_req:with_json(#{<<"username">> => <<"admin">>,
-                                     <<"password">> => <<"password">>}, Req),
+    Req1 = Req#{params => #{<<"username">> => <<"admin">>,
+                             <<"password">> => <<"password">>}},
     ?assertMatch({true, #{authed := true, username := <<"admin">>}},
                  blog_auth:username_password(Req1)).
 
 invalid_password_test() ->
     Req = nova_test_req:new(post, "/login"),
-    Req1 = nova_test_req:with_json(#{<<"username">> => <<"admin">>,
-                                     <<"password">> => <<"wrong">>}, Req),
+    Req1 = Req#{params => #{<<"username">> => <<"admin">>,
+                             <<"password">> => <<"wrong">>}},
     ?assertEqual(false, blog_auth:username_password(Req1)).
 
 missing_params_test() ->
