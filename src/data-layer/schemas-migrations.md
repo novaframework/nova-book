@@ -36,6 +36,8 @@ A schema module implements the `kura_schema` behaviour and exports three require
 
 Each field has a `name` (atom), `type` (one of Kura's types), and optional properties like `nullable` and `default`.
 
+> **Auto-timestamps:** When a schema includes `inserted_at` and `updated_at` fields, Kura automatically sets them on insert and update operations — no need to manage them in your changesets.
+
 ### Kura field types
 
 | Type | PostgreSQL | Erlang |
@@ -52,6 +54,7 @@ Each field has a `name` (atom), `type` (one of Kura's types), and optional prope
 | `jsonb` | `JSONB` | map/list |
 | `{enum, [atoms]}` | `VARCHAR(255)` | atom |
 | `{array, Type}` | `Type[]` | list |
+| `{embed, ...}` | — | map/list | *Covered in a later chapter* |
 
 ## Auto-generating migrations
 
@@ -62,12 +65,12 @@ rebar3 compile
 ```
 
 ```
-===> [kura] Schema diff detected changes
-===> [kura] Generated src/migrations/m20260223120000_create_users.erl
+===> kura: generated src/migrations/m20260223120000_create_users.erl
+===> kura: migration generated
 ===> Compiling blog
 ```
 
-Kura compared your schema definitions against the current database state (no migrations yet = empty database) and generated a migration file.
+Kura replayed existing migration files to determine the current database state (no migrations yet = empty database), then compared that against your schema definitions and generated a migration file.
 
 ## Walking through the migration
 
@@ -136,8 +139,8 @@ rebar3 compile
 ```
 
 ```
-===> [kura] Schema diff detected changes
-===> [kura] Generated src/migrations/m20260223120100_create_posts.erl
+===> kura: generated src/migrations/m20260223120100_create_posts.erl
+===> kura: migration generated
 ===> Compiling blog
 ```
 
@@ -145,7 +148,7 @@ A second migration appears for the posts table.
 
 ## Running migrations
 
-Kura runs migrations when the repo starts. On application boot, `blog_repo:start()` checks the `schema_migrations` table and runs any pending migrations in order.
+In the previous chapter we added both `blog_repo:start()` and `kura_migrator:migrate(blog_repo)` to the supervisor. The repo start creates the connection pool; `migrate/1` checks the `schema_migrations` table and runs any pending migrations in order.
 
 Start the application:
 
@@ -156,8 +159,8 @@ rebar3 nova serve
 Check the logs — you should see the migrations being applied:
 
 ```
-[info] [kura] Running migration: m20260223120000_create_users
-[info] [kura] Running migration: m20260223120100_create_posts
+Kura: up migration 20260223120000 (m20260223120000_create_users)
+Kura: up migration 20260223120100 (m20260223120100_create_posts)
 ```
 
 ### The schema_migrations table
@@ -173,6 +176,23 @@ blog_dev=# SELECT * FROM schema_migrations;
 ```
 
 Each row records a migration version (the timestamp from the filename). Kura only runs migrations that are not in this table.
+
+### Managing migrations
+
+During development you'll sometimes need to undo a migration or check what's been applied:
+
+```erlang
+%% Roll back the last migration
+kura_migrator:rollback(blog_repo).
+
+%% Roll back the last 3 migrations
+kura_migrator:rollback(blog_repo, 3).
+
+%% Show status of all migrations (up or pending)
+kura_migrator:status(blog_repo).
+```
+
+`status/1` returns a list of `{Version, Module, up | pending}` tuples — handy for verifying the state of your database during development.
 
 ## Modifying schemas
 
@@ -200,8 +220,9 @@ rebar3 compile
 ```
 
 ```
-===> [kura] Schema diff detected changes
-===> [kura] Generated src/migrations/m20260223120200_alter_users.erl
+===> kura: generated src/migrations/m20260223120200_alter_users.erl
+===> kura: migration generated
+===> Compiling blog
 ```
 
 The generated migration adds the column:
