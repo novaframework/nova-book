@@ -114,6 +114,10 @@ The security flow for each request is:
 3. If `security` is a function, call it with the request map
 4. If it returns `{true, AuthData}`, merge `auth_data => AuthData` into the request and continue to the controller
 5. If it returns `false`, trigger the 401 error handler
+6. If it returns `{redirect, Path}`, redirect without calling the controller
+7. If it returns `{false, StatusCode, Headers, Body}`, respond with a custom error
+
+The structured `{false, StatusCode, Headers, Body}` form is useful for APIs where you want to return JSON error details instead of triggering the generic 401 handler.
 
 You can have different security functions for different route groups — one for API token auth, another for session auth, and so on.
 
@@ -166,8 +170,9 @@ login_post(#{auth_data := #{authed := true, username := Username}} = Req) ->
     {ok, SessionId} = nova_session:generate_session_id(),
     Req1 = cowboy_req:set_resp_cookie(<<"session_id">>, SessionId, Req,
                                        #{path => <<"/">>, http_only => true}),
-    nova_session_ets:set_value(SessionId, <<"username">>, Username),
-    {redirect, "/"};
+    Req2 = Req1#{nova_session_id => SessionId},
+    nova_session:set(Req2, <<"username">>, Username),
+    {redirect, "/", Req1};
 login_post(_Req) ->
     {ok, [{error, <<"Invalid username or password">>}], #{view => login}}.
 

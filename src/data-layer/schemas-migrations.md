@@ -47,7 +47,7 @@ Each field has a `name` (atom), `type` (one of Kura's types), and optional prope
 | `text` | `TEXT` | binary |
 | `boolean` | `BOOLEAN` | boolean |
 | `date` | `DATE` | `{Y, M, D}` |
-| `utc_datetime` | `TIMESTAMP` | `{{Y,M,D},{H,Mi,S}}` |
+| `utc_datetime` | `TIMESTAMPTZ` | `{{Y,M,D},{H,Mi,S}}` |
 | `uuid` | `UUID` | binary |
 | `jsonb` | `JSONB` | map/list |
 | `{enum, [atoms]}` | `VARCHAR(255)` | atom |

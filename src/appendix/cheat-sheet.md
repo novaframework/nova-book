@@ -14,7 +14,7 @@ Quick reference for Nova's APIs, return values, configuration, and Kura's databa
 | `{status, StatusCode}` | Bare status code response |
 | `{status, StatusCode, Headers, Body}` | Status with headers and body |
 | `{redirect, Path}` | HTTP redirect |
-| `{sendfile, StatusCode, Headers, FilePath, Offset, Length}` | Send a file |
+| `{sendfile, StatusCode, Headers, {Offset, Length, Path}, MimeType}` | Send a file |
 
 ## Route configuration
 
@@ -68,7 +68,9 @@ post_request(Req, Env, Options, State) ->
     %% Same return values as pre_request
 
 plugin_info() ->
-    {Title, Version, Author, Description, OptionKeys}.
+    #{title := binary(), version := binary(), url := binary(),
+      authors := [binary()], description := binary(),
+      options => [{atom(), binary()}]}.
 ```
 
 ### Plugin configuration
@@ -147,9 +149,9 @@ nova_pubsub:get_local_members(Channel)
 
 ```erlang
 {pre_request, nova_request_plugin, #{
-    decode_json_body => true,         %% Decode JSON request bodies
-    read_urlencoded_body => true,     %% Decode URL-encoded form data
-    read_body => true                 %% Read raw body
+    decode_json_body => true,         %% Decode JSON body into `json` key
+    read_urlencoded_body => true,     %% Decode URL-encoded form data into `params` key
+    parse_qs => true                  %% Parse query string into `parsed_qs` key
 }}
 ```
 
@@ -231,7 +233,7 @@ embeds() ->
 | `text` | `TEXT` | binary |
 | `boolean` | `BOOLEAN` | boolean |
 | `date` | `DATE` | `{Y, M, D}` |
-| `utc_datetime` | `TIMESTAMP` | `{{Y,M,D},{H,Mi,S}}` |
+| `utc_datetime` | `TIMESTAMPTZ` | `{{Y,M,D},{H,Mi,S}}` |
 | `uuid` | `UUID` | binary |
 | `jsonb` | `JSONB` | map/list |
 | `{enum, [atoms]}` | `VARCHAR(255)` | atom |
