@@ -74,8 +74,8 @@ Create `src/views/error_page.dtl`:
 For APIs, return JSON instead of HTML. Check the `Accept` header to decide:
 
 ```erlang
-not_found(Req) ->
-    case cowboy_req:header(<<"accept">>, Req) of
+not_found(#{req := CowboyReq} = _Req) ->
+    case cowboy_req:header(<<"accept">>, CowboyReq) of
         <<"application/json">> ->
             {json, 404, #{}, #{error => <<"not_found">>,
                                message => <<"Resource not found">>}};
@@ -91,7 +91,11 @@ When using Kura, changeset validation errors are structured data. A helper funct
 
 ```erlang
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+    lists:foldl(fun({Field, Msg}, Acc) ->
+        Key = atom_to_binary(Field),
+        Existing = maps:get(Key, Acc, []),
+        Acc#{Key => Existing ++ [Msg]}
+    end, #{}, Errors).
 ```
 
 Use it in your controllers:
