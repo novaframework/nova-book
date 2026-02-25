@@ -91,7 +91,11 @@ When using Kura, changeset validation errors are structured data. A helper funct
 
 ```erlang
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+    lists:foldl(fun({Field, Msg}, Acc) ->
+        Key = atom_to_binary(Field),
+        Existing = maps:get(Key, Acc, []),
+        Acc#{Key => Existing ++ [Msg]}
+    end, #{}, Errors).
 ```
 
 Use it in your controllers:

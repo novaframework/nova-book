@@ -46,7 +46,7 @@ show_missing_post_test() ->
     Req = nova_test_req:new(get, "/api/posts/999999"),
     Req1 = nova_test_req:with_bindings(#{<<"id">> => <<"999999">>}, Req),
     Result = blog_posts_controller:show(Req1),
-    ?assertStatusResponse(404, Result).
+    ?assertMatch({status, 404, _, _}, Result).
 
 create_post_test() ->
     Req = nova_test_req:new(post, "/api/posts"),
@@ -60,7 +60,7 @@ create_invalid_post_test() ->
     Req = nova_test_req:new(post, "/api/posts"),
     Req1 = nova_test_req:with_json(#{}, Req),
     Result = blog_posts_controller:create(Req1),
-    ?assertStatusResponse(422, Result).
+    ?assertJsonResponse(422, #{errors := _}, Result).
 ```
 
 ### Request builder functions

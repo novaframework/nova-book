@@ -4,7 +4,7 @@ In the previous chapter we built a posts controller by hand. The `rebar3_nova` p
 
 ## Generate a resource
 
-The `nova gen_resource` command creates a controller, a JSON schema, and prints route definitions:
+The `nova gen_resource` command creates a controller, a JSON schema, and prints route definitions. Like `gen_controller`, it also accepts `--actions` to limit which actions are scaffolded:
 
 ```shell
 rebar3 nova gen_resource --name posts
@@ -94,14 +94,14 @@ Replace the TODO stubs with actual Kura repo calls. Since we already wrote a ful
 -include_lib("kura/include/kura.hrl").
 
 -export([
-         index/1,
+         list/1,
          show/1,
          create/1,
          update/1,
          delete/1
         ]).
 
-index(_Req) ->
+list(_Req) ->
     Q = kura_query:from(post),
     Q1 = kura_query:order_by(Q, [{inserted_at, desc}]),
     {ok, Posts} = blog_repo:all(Q1),
@@ -158,7 +158,11 @@ post_to_json(#{id := Id, title := Title, body := Body, status := Status,
       status => atom_to_binary(Status), user_id => UserId}.
 
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+    lists:foldl(fun({Field, Msg}, Acc) ->
+        Key = atom_to_binary(Field),
+        Existing = maps:get(Key, Acc, []),
+        Acc#{Key => Existing ++ [Msg]}
+    end, #{}, Errors).
 ```
 
 ## Generate a test suite
@@ -183,32 +187,34 @@ all() ->
     [test_list, test_show, test_create, test_update, test_delete].
 
 init_per_suite(Config) ->
+    application:ensure_all_started(inets),
     application:ensure_all_started(blog),
     Config.
 
 end_per_suite(_Config) ->
+    application:stop(blog),
     ok.
 
 test_list(_Config) ->
-    {ok, {{_, 200, _}, _, _Body}} =
-        httpc:request(get, {"http://localhost:8080/posts", []}, [], []).
+    {ok, {{_, 200, _}, _, _}} =
+        httpc:request("http://localhost:8080/posts").
 
 test_show(_Config) ->
-    {ok, {{_, 200, _}, _, _Body}} =
-        httpc:request(get, {"http://localhost:8080/posts/1", []}, [], []).
+    {ok, {{_, 200, _}, _, _}} =
+        httpc:request("http://localhost:8080/posts/1").
 
 test_create(_Config) ->
-    {ok, {{_, 201, _}, _, _Body}} =
+    {ok, {{_, 201, _}, _, _}} =
         httpc:request(post, {"http://localhost:8080/posts", [],
                              "application/json", "{}"}, [], []).
 
 test_update(_Config) ->
-    {ok, {{_, 200, _}, _, _Body}} =
+    {ok, {{_, 200, _}, _, _}} =
         httpc:request(put, {"http://localhost:8080/posts/1", [],
                             "application/json", "{}"}, [], []).
 
 test_delete(_Config) ->
-    {ok, {{_, 204, _}, _, _Body}} =
+    {ok, {{_, 204, _}, _, _}} =
         httpc:request(delete, {"http://localhost:8080/posts/1", []}, [], []).
 ```
 

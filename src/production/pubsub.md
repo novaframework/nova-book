@@ -155,7 +155,7 @@ For a live comment section on a specific post, use dynamic channel names:
 
 -export([init/1, websocket_handle/2, websocket_info/2]).
 
-init(#{bindings := #{<<"post_id">> := PostId}} = State) ->
+init(#{req := #{bindings := #{<<"post_id">> := PostId}}} = State) ->
     Channel = list_to_atom("post_comments_" ++ binary_to_list(PostId)),
     nova_pubsub:join(Channel),
     {ok, State#{channel => Channel}};

@@ -72,7 +72,7 @@ A snippet from a generated spec:
   "paths": {
     "/api/posts": {
       "get": {
-        "operationId": "blog_posts_controller.index",
+        "operationId": "blog_posts_controller.list",
         "responses": {
           "200": {
             "description": "OK",
@@ -181,7 +181,7 @@ rebar3 nova middleware
   Plugins:
     (inherits global)
   Routes:
-    GET /posts -> blog_posts_controller:index
+    GET /posts -> blog_posts_controller:list
     POST /posts -> blog_posts_controller:create
     GET /posts/:id -> blog_posts_controller:show
     PUT /posts/:id -> blog_posts_controller:update
@@ -196,7 +196,7 @@ The `nova routes` command displays the compiled routing tree:
 rebar3 nova routes
 Host: '_'
      ├─  /api
-     │   ├─  GET /posts (blog, blog_posts_controller:index/1)
+     │   ├─  GET /posts (blog, blog_posts_controller:list/1)
      │   ├─  GET /posts/:id (blog, blog_posts_controller:show/1)
      │   ├─  POST /posts (blog, blog_posts_controller:create/1)
      │   ├─  PUT /posts/:id (blog, blog_posts_controller:update/1)
@@ -241,7 +241,7 @@ To fix the warnings, add a security callback to the route group:
 #{prefix => "/api",
   security => fun blog_auth:validate_token/1,
   routes => [
-    {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+    {"/posts", fun blog_posts_controller:list/1, #{methods => [get]}},
     {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
     {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
     {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},
