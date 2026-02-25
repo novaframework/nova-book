@@ -140,7 +140,7 @@ Create `src/schemas/post_metadata.erl`:
 
 -export([table/0, fields/0, primary_key/0, changeset/2]).
 
-table() -> <<"embedded">>.
+table() -> <<"_embedded">>.
 
 primary_key() -> undefined.
 
@@ -196,7 +196,7 @@ Cast the embed in your changeset:
 
 ```erlang
 changeset(Data, Params) ->
-    CS = kura_changeset:cast(post, Data, Params, [title, body, status, user_id, metadata]),
+    CS = kura_changeset:cast(post, Data, Params, [title, body, status, user_id]),
     CS1 = kura_changeset:validate_required(CS, [title, body]),
     CS2 = kura_changeset:validate_length(CS1, title, [{min, 3}, {max, 200}]),
     CS3 = kura_changeset:validate_inclusion(CS2, status, [draft, published, archived]),
@@ -257,9 +257,9 @@ Add a simple tags controller:
 
 ```erlang
 -module(blog_tags_controller).
--export([index/1, create/1]).
+-export([list/1, create/1]).
 
-index(_Req) ->
+list(_Req) ->
     Q = kura_query:from(tag),
     Q1 = kura_query:order_by(Q, [{name, asc}]),
     {ok, Tags} = blog_repo:all(Q1),
