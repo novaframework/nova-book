@@ -227,7 +227,7 @@ routes(_Environment) ->
           {pre_request, nova_request_plugin, #{decode_json_body => true}}
       ],
       routes => [
-                 {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+                 {"/posts", fun blog_posts_controller:list/1, #{methods => [get]}},
                  {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
                  {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
                  {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},

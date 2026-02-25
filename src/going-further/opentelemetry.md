@@ -109,13 +109,13 @@ routes(_Environment) ->
     [#{
         plugins => [{pre_request, otel_nova_plugin, #{}}],
         routes => [
-            {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+            {"/posts", fun blog_posts_controller:list/1, #{methods => [get]}},
             {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}}
         ]
     }].
 ```
 
-Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attributes, and the span name becomes `GET blog_posts_controller:index` instead of just `HTTP GET`.
+Spans get enriched with `nova.app`, `nova.controller`, and `nova.action` attributes, and the span name becomes `GET blog_posts_controller:list` instead of just `HTTP GET`.
 
 ## Kura query telemetry
 

@@ -157,23 +157,15 @@ Preview = kura_changeset:apply_changes(CS),
 
 ## Rendering errors in JSON responses
 
-Convert changeset errors to a JSON-friendly map:
+Convert changeset errors to a JSON-friendly map. A field can have multiple errors (e.g., too short *and* wrong format), so we group them into lists:
 
 ```erlang
-changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
-```
-
-```admonish warning
-`maps:from_list/1` keeps only the last error per field. If a field can have multiple errors (e.g., too short *and* wrong format), group them into lists instead:
-~~~erlang
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
     lists:foldl(fun({Field, Msg}, Acc) ->
         Key = atom_to_binary(Field),
         Existing = maps:get(Key, Acc, []),
         Acc#{Key => Existing ++ [Msg]}
     end, #{}, Errors).
-~~~
 ```
 
 Use it in controllers:
