@@ -115,7 +115,44 @@ false
 
 ```erlang
 4> CS2 = post:changeset(#{}, #{<<"title">> => <<"Hi">>, <<"body">> => <<"Hello">>}).
-#kura_changeset{valid = false, errors = [{title, <<"must be at least 3 characters">>}], ...}
+#kura_changeset{valid = false, errors = [{title, <<"should be at least 3 character(s)">>}], ...}
+```
+
+## Working with changeset fields
+
+Kura exports helper functions for reading and modifying changeset data programmatically. These are essential when building multi-step changeset pipelines.
+
+| Function | Purpose |
+|---|---|
+| `get_field(CS, Field)` | Returns value from `changes`, falling back to `data` |
+| `get_change(CS, Field)` | Returns value only if it is in `changes` |
+| `put_change(CS, Field, Value)` | Adds or overwrites a value in `changes` |
+| `add_error(CS, Field, Msg)` | Appends a custom error and sets `valid = false` |
+| `apply_changes(CS)` | Merges `changes` into `data`, returns the merged map (no persistence) |
+
+A common use case is hashing a password before storing it:
+
+```erlang
+-export([registration_changeset/2]).
+
+registration_changeset(Data, Params) ->
+    CS = kura_changeset:cast(user, Data, Params, [username, email, password]),
+    CS1 = kura_changeset:validate_required(CS, [username, email, password]),
+    CS2 = kura_changeset:validate_length(CS1, password, [{min, 8}]),
+    maybe_hash_password(CS2).
+
+maybe_hash_password(#kura_changeset{valid = true, changes = #{password := Password}} = CS) ->
+    Hash = bcrypt:hashpw(Password, bcrypt:gen_salt()),
+    kura_changeset:put_change(CS, password_hash, list_to_binary(Hash));
+maybe_hash_password(CS) ->
+    CS.
+```
+
+`apply_changes/1` is useful when you need the merged result without hitting the database — for example, to preview changes or pass data to a template:
+
+```erlang
+Preview = kura_changeset:apply_changes(CS),
+#{title := Title, body := Body} = Preview.
 ```
 
 ## Rendering errors in JSON responses
@@ -125,6 +162,18 @@ Convert changeset errors to a JSON-friendly map:
 ```erlang
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
     maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+```
+
+```admonish warning
+`maps:from_list/1` keeps only the last error per field. If a field can have multiple errors (e.g., too short *and* wrong format), group them into lists instead:
+~~~erlang
+changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
+    lists:foldl(fun({Field, Msg}, Acc) ->
+        Key = atom_to_binary(Field),
+        Existing = maps:get(Key, Acc, []),
+        Acc#{Key => Existing ++ [Msg]}
+    end, #{}, Errors).
+~~~
 ```
 
 Use it in controllers:
@@ -158,12 +207,16 @@ The response looks like:
 | `validate_required(CS, Fields)` | Fields must be present and non-empty |
 | `validate_format(CS, Field, Regex)` | Value must match the regex |
 | `validate_length(CS, Field, Opts)` | String length: `[{min,N}, {max,N}, {is,N}]` |
-| `validate_number(CS, Field, Opts)` | Number range: `[{greater_than,N}, {less_than,N}]` |
+| `validate_number(CS, Field, Opts)` | Number range: `[{greater_than,N}, {less_than,N}, {greater_than_or_equal_to,N}, {less_than_or_equal_to,N}, {equal_to,N}]` |
 | `validate_inclusion(CS, Field, List)` | Value must be in the list |
 | `validate_change(CS, Field, Fun)` | Custom validation: `fun(Val) -> ok \| {error, Msg}` |
 | `unique_constraint(CS, Field)` | Map PG unique violation to a changeset error |
 | `foreign_key_constraint(CS, Field)` | Map PG FK violation to a changeset error |
 | `check_constraint(CS, Name, Field, Opts)` | Map PG check constraint to a changeset error |
+
+```admonish info
+`validate_format`, `validate_length`, `validate_number`, and `validate_inclusion` only run when the field appears in `changes`. If the field was not cast, the validation is skipped. This means update changesets only validate the fields being changed — unchanged fields keep their existing values without re-validation.
+```
 
 ## Schemaless changesets
 
