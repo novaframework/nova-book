@@ -92,7 +92,7 @@ A route can handle multiple specific methods:
 ```erlang
 login(#{method := <<"GET">>}) ->
     {ok, [{message, <<"Please log in">>}]};
-login(#{method := <<"POST">>, body := Body}) ->
+login(#{method := <<"POST">>}) ->
     %% process login form
     {redirect, "/"}.
 ```

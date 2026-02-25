@@ -32,19 +32,19 @@ Add these routes to your router:
          delete/1
         ]).
 
-list(#{req := _Req} = _NovaReq) ->
+list(_Req) ->
     {json, #{<<"message">> => <<"TODO">>}}.
 
-show(#{req := _Req} = _NovaReq) ->
+show(_Req) ->
     {json, #{<<"message">> => <<"TODO">>}}.
 
-create(#{req := _Req} = _NovaReq) ->
+create(_Req) ->
     {status, 201, #{}, #{<<"message">> => <<"TODO">>}}.
 
-update(#{req := _Req} = _NovaReq) ->
+update(_Req) ->
     {json, #{<<"message">> => <<"TODO">>}}.
 
-delete(#{req := _Req} = _NovaReq) ->
+delete(_Req) ->
     {status, 204}.
 ```
 

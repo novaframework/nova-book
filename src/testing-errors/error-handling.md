@@ -74,8 +74,8 @@ Create `src/views/error_page.dtl`:
 For APIs, return JSON instead of HTML. Check the `Accept` header to decide:
 
 ```erlang
-not_found(#{req := CowboyReq} = _Req) ->
-    case cowboy_req:header(<<"accept">>, CowboyReq) of
+not_found(Req) ->
+    case cowboy_req:header(<<"accept">>, Req) of
         <<"application/json">> ->
             {json, 404, #{}, #{error => <<"not_found">>,
                                message => <<"Resource not found">>}};

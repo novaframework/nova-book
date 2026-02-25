@@ -163,14 +163,14 @@ Let's build a posts API controller that uses the repo. Create `src/controllers/b
 -include_lib("kura/include/kura.hrl").
 
 -export([
-         index/1,
+         list/1,
          show/1,
          create/1,
          update/1,
          delete/1
         ]).
 
-index(_Req) ->
+list(_Req) ->
     Q = kura_query:from(post),
     Q1 = kura_query:order_by(Q, [{inserted_at, desc}]),
     {ok, Posts} = blog_repo:all(Q1),
@@ -247,7 +247,7 @@ format_datetime(_) ->
 #{prefix => "/api",
   security => false,
   routes => [
-             {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+             {"/posts", fun blog_posts_controller:list/1, #{methods => [get]}},
              {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
              {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
              {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},
