@@ -50,6 +50,28 @@ Fetch a single record by primary key:
 {error, not_found} = blog_repo:get(post, 999).
 ```
 
+## Get by field
+
+`get_by/2` fetches a single record matching the given fields:
+
+```erlang
+{ok, User} = blog_repo:get_by(user, [{email, <<"alice@example.com">>}]).
+{error, not_found} = blog_repo:get_by(user, [{username, <<"nobody">>}]).
+```
+
+If more than one row matches, it returns `{error, multiple_results}`.
+
+For more complex lookups, `one/1` returns a single result from a query:
+
+```erlang
+Q = kura_query:from(post),
+Q1 = kura_query:where(Q, {status, <<"published">>}),
+Q2 = kura_query:order_by(Q1, [{inserted_at, desc}]),
+{ok, Latest} = blog_repo:one(Q2).
+```
+
+Like `get_by`, it returns `{error, not_found}` when no rows match and `{error, multiple_results}` when more than one row matches.
+
 ## Update
 
 To update a record, build a changeset from the existing data and new params:
@@ -89,6 +111,10 @@ Q2 = kura_query:order_by(Q1, [{inserted_at, desc}]),
 Q3 = kura_query:limit(Q2, 10),
 Q4 = kura_query:offset(Q3, 20),
 {ok, Page3} = blog_repo:all(Q4).
+
+%% Select specific fields only
+Q5 = kura_query:select(Q, [id, title, status]),
+{ok, Posts} = blog_repo:all(Q5).
 ```
 
 ### Where conditions
@@ -113,6 +139,15 @@ kura_query:where(Q, {body, is_not_nil})
 
 %% OR conditions
 kura_query:where(Q, {'or', [{status, <<"draft">>}, {status, <<"archived">>}]})
+
+%% NOT IN clause
+kura_query:where(Q, {status, not_in, [<<"archived">>, <<"deleted">>]})
+
+%% BETWEEN
+kura_query:where(Q, {user_id, between, {1, 100}})
+
+%% NOT wrapper
+kura_query:where(Q, {'not', {status, <<"draft">>}})
 
 %% AND conditions (multiple where calls are AND by default)
 Q1 = kura_query:where(Q, {status, <<"published">>}),
@@ -193,7 +228,11 @@ post_to_json(#{id := Id, title := Title, body := Body, status := Status,
       inserted_at => format_datetime(InsertedAt)}.
 
 changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    maps:from_list([{atom_to_binary(Field), Msg} || {Field, Msg} <- Errors]).
+    lists:foldl(fun({Field, Msg}, Acc) ->
+        Key = atom_to_binary(Field),
+        Existing = maps:get(Key, Acc, []),
+        Acc#{Key => Existing ++ [Msg]}
+    end, #{}, Errors).
 
 format_datetime({{Y,Mo,D},{H,Mi,S}}) ->
     list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0B",
