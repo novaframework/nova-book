@@ -143,8 +143,7 @@ registration_changeset(Data, Params) ->
 
 maybe_hash_password(#kura_changeset{valid = true, changes = #{password := Password}} = CS) ->
     Hash = bcrypt:hashpw(Password, bcrypt:gen_salt()),
-    CS1 = kura_changeset:put_change(CS, password_hash, list_to_binary(Hash)),
-    kura_changeset:delete_change(CS1, password);
+    kura_changeset:put_change(CS, password_hash, list_to_binary(Hash));
 maybe_hash_password(CS) ->
     CS.
 ```
