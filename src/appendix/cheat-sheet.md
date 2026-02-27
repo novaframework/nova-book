@@ -65,7 +65,8 @@ pre_request(Req, Env, Options, State) ->
     {error, Reason}.         %% 500 error
 
 post_request(Req, Env, Options, State) ->
-    %% Same return values as pre_request
+    %% Same return values as pre_request.
+    {ok, Req, State}.
 
 plugin_info() ->
     #{title := binary(), version := binary(), url := binary(),
@@ -398,3 +399,140 @@ rebar3 nova openapi --output priv/assets/openapi.json --title "My API" --api-ver
 # Kura setup with custom repo name
 rebar3 kura setup --name my_repo
 ```
+
+---
+
+## Arizona — Live Views
+
+### Live view callbacks
+
+```erlang
+-behaviour(arizona_live_view).
+
+mount(Params) ->
+    {ok, InitialState}.
+
+render(State) ->
+    arizona:render("
+        <h1>~{maps:get(title, State)}</h1>
+        <button az-click=\"my_event\">Click</button>
+    ").
+
+handle_event(EventName, Params, State) ->
+    {noreply, NewState} |
+    {reply, ReplyMap, NewState} |
+    {noreply, NewState, Actions}.
+
+handle_info(ErlangMessage, State) ->
+    {noreply, NewState}.
+```
+
+### Event bindings
+
+| Attribute | Triggers on |
+|---|---|
+| `az-click` | Click |
+| `az-submit` | Form submission |
+| `az-change` | Input change |
+| `az-keydown` | Key press |
+| `az-keyup` | Key release |
+| `az-focus` | Element focus |
+| `az-blur` | Element blur |
+| `az-value-*` | Pass data with events |
+| `az-debounce` | Delay event (ms) |
+
+### Navigation
+
+```html
+<a href="/path" az-live-redirect>Navigate (new view)</a>
+<a href="/path?q=x" az-live-patch>Navigate (same view, new params)</a>
+```
+
+### Actions
+
+```erlang
+{noreply, State, [{redirect, "/path"}]}
+{noreply, State, [{patch, "/path?page=2"}]}
+{noreply, State, [{dispatch, EventName, Payload}]}
+```
+
+### Components
+
+```erlang
+%% Stateless — pure function
+my_component(#{title := Title}) ->
+    arizona:render("<h2>~{Title}</h2>").
+
+%% Stateful — behaviour with mount/render/handle_event
+-behaviour(arizona_live_component).
+%% Must have unique id when embedded
+arizona:component(my_component, #{id => "my-id", ...}).
+```
+
+### Client JS API
+
+```javascript
+arizona.pushEvent("event", {key: "value"})
+arizona.pushEventTo("#component-id", "event", {})
+await arizona.callEvent("event", {})
+await arizona.callEventFrom("#id", "event", {})
+```
+
+---
+
+## Hikyaku — Email
+
+### Mailer behaviour
+
+```erlang
+-module(my_mailer).
+-behaviour(hikyaku_mailer).
+-export([config/0]).
+
+config() ->
+    #{adapter => hikyaku_adapter_smtp,
+      relay => <<"smtp.example.com">>,
+      port => 587,
+      username => <<"user">>,
+      password => <<"pass">>,
+      tls => always}.
+```
+
+### Building and sending
+
+```erlang
+E0 = hikyaku_email:new(),
+E1 = hikyaku_email:from(E0, {<<"Name">>, <<"addr@example.com">>}),
+E2 = hikyaku_email:to(E1, <<"recipient@example.com">>),
+E3 = hikyaku_email:cc(E2, <<"cc@example.com">>),
+E4 = hikyaku_email:bcc(E3, <<"bcc@example.com">>),
+E5 = hikyaku_email:reply_to(E4, <<"reply@example.com">>),
+E6 = hikyaku_email:subject(E5, <<"Subject line">>),
+E7 = hikyaku_email:text_body(E6, <<"Plain text body">>),
+E8 = hikyaku_email:html_body(E7, <<"<h1>HTML body</h1>">>),
+E9 = hikyaku_email:header(E8, <<"X-Custom">>, <<"value">>),
+{ok, _} = hikyaku_mailer:deliver(my_mailer, E9).
+```
+
+### Attachments
+
+```erlang
+Att = hikyaku_attachment:from_data(Data, <<"file.pdf">>),
+E1 = hikyaku_email:attachment(E0, Att).
+
+%% Inline attachment with Content-ID
+Att2 = hikyaku_attachment:from_data(ImgData, <<"logo.png">>),
+Att3 = hikyaku_attachment:inline(Att2, <<"logo">>),
+E2 = hikyaku_email:attachment(E1, Att3).
+```
+
+### Adapters
+
+| Adapter | Config keys |
+|---|---|
+| `hikyaku_adapter_smtp` | `relay`, `port`, `username`, `password`, `tls` |
+| `hikyaku_adapter_sendgrid` | `api_key` |
+| `hikyaku_adapter_mailgun` | `api_key`, `domain` |
+| `hikyaku_adapter_ses` | `access_key`, `secret_key`, `region` |
+| `hikyaku_adapter_logger` | `level` |
+| `hikyaku_adapter_test` | `pid` |

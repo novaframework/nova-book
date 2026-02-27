@@ -14,20 +14,23 @@ No prior Erlang experience is needed. The [Erlang Essentials](appendix/erlang-es
 
 Throughout this book you will build a **blog platform** step by step:
 
-1. **A Nova application from scratch** — project structure, routing, and your first controller
-2. **An HTML frontend** — login page, views with ErlyDTL templates, authentication and sessions
-3. **A database layer with Kura** — schemas, migrations, changesets, and a repository for PostgreSQL
-4. **A JSON API** — RESTful endpoints with code generators, associations, preloading, and embedded schemas
-5. **Real-time features** — WebSockets and pub/sub for a live comment feed
-6. **Production concerns** — transactions, bulk operations, error handling, and deployment
-7. **Developer tooling** — OpenAPI documentation, security audits, custom plugins, and OpenTelemetry
+1. **A Nova application from scratch** — project structure, routing, controllers, and plugins
+2. **A database layer with Kura** — schemas, migrations, changesets, associations, and advanced queries
+3. **Authentication & sessions** — login flows, security callbacks, role-based authorization
+4. **An HTML frontend** — ErlyDTL templates, layouts, forms with validation
+5. **A JSON API** — RESTful endpoints with code generators, OpenAPI documentation, error handling
+6. **Real-time features with Arizona** — live views, stateful components, differential rendering
+7. **Real-time infrastructure** — WebSockets, pub/sub, and a live comment section
+8. **Email delivery with Hikyaku** — registration confirmation, password reset, notifications
+9. **Testing** — unit tests with EUnit, integration tests with Common Test, real-time testing
+10. **Production** — configuration, OpenTelemetry observability, custom plugins, deployment
 
-The blog has users who write posts, readers who leave comments, and tags for organizing content. This naturally exercises Kura's key features: schemas with associations, enum types (post status), embedded schemas (post metadata as JSONB), changesets with validation, many-to-many relationships (posts and tags), transactions, and bulk operations.
+The blog has users who write posts, readers who leave comments, and tags for organizing content. This naturally exercises the full Nova ecosystem: Kura for the database layer, Arizona for real-time interactivity, Hikyaku for transactional email, and Nova's plugin system for cross-cutting concerns.
 
 ```admonish info title="Prerequisites"
 Before starting, make sure you have:
 
-- **Erlang/OTP 27+** — install via [mise](https://mise.jdx.dev/) (recommended), [asdf](https://asdf-vm.com/), or your system package manager
+- **Erlang/OTP 28+** — install via [mise](https://mise.jdx.dev/) (recommended), [asdf](https://asdf-vm.com/), or your system package manager. OTP 28 is required for Arizona.
 - **Rebar3** — the Erlang build tool, also installable via mise/asdf
 - **Docker** — for running PostgreSQL (we use Docker Compose throughout)
 - A text editor and a terminal
@@ -37,8 +40,8 @@ See the [Erlang Essentials](appendix/erlang-essentials.md) appendix for detailed
 
 ## How to read this book
 
-The chapters are designed to be read in order. Each one builds on the previous — the application grows progressively from a bare project to a full-featured, deployed service. Code examples accumulate, so what you build in Chapter 2 is extended in Chapter 6 and deployed in Chapter 17.
+The chapters are designed to be read in order. Each one builds on the previous — the application grows progressively from a bare project to a full-featured, deployed service. Code examples accumulate, so what you build in Part I is extended in Part II and brought to life in Part VI.
 
-If you are already familiar with Nova, you can jump to specific chapters. The [Cheat Sheet](appendix/cheat-sheet.md) appendix is a useful standalone reference.
+If you are already familiar with Nova, you can jump to specific parts. The [Cheat Sheet](appendix/cheat-sheet.md) appendix is a useful standalone reference.
 
-Let's get started by [creating your first Nova application](getting-started/create-app.md).
+Let's get started by [creating your first Nova application](foundations/create-app.md).

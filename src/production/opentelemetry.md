@@ -228,4 +228,4 @@ Clone it and run `docker-compose up` from the `docker/` directory.
 
 ---
 
-That wraps up the main content. For quick reference, see the [Erlang Essentials](../appendix/erlang-essentials.md) appendix and the [Cheat Sheet](../appendix/cheat-sheet.md).
+Next, let's build [custom plugins and set up CORS](plugins-cors.md) for our API.

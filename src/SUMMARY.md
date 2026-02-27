@@ -4,43 +4,72 @@
 
 ---
 
-# Getting Started
+# Part I — Foundations
 
-- [Create a New Application](getting-started/create-app.md)
-- [Routing](getting-started/routing.md)
-- [Plugins](getting-started/plugins.md)
-- [Views, Auth & Sessions](getting-started/views-auth-sessions.md)
+- [Your First Nova Application](foundations/create-app.md)
+- [Routing](foundations/routing.md)
+- [Controllers & Responses](foundations/controllers.md)
+- [Plugins & Middleware](foundations/plugins.md)
 
-# Data Layer with Kura
+# Part II — Data Layer with Kura
 
 - [Database Setup](data-layer/setup.md)
-- [Schemas and Migrations](data-layer/schemas-migrations.md)
-- [Changesets and Validation](data-layer/changesets.md)
-- [CRUD with the Repository](data-layer/crud.md)
+- [Schemas & Migrations](data-layer/schemas-migrations.md)
+- [Changesets & Validation](data-layer/changesets.md)
+- [CRUD & the Query Builder](data-layer/crud.md)
+- [Associations & Preloading](data-layer/associations.md)
+- [Many-to-Many & Embedded Schemas](data-layer/advanced-data.md)
+- [Advanced Queries](data-layer/advanced-queries.md)
+- [Transactions & Multi](data-layer/transactions-bulk.md)
 
-# Building the API
+# Part III — Authentication & Sessions
 
-- [JSON API with Generators](building-api/json-api.md)
-- [Associations and Preloading](building-api/associations.md)
-- [Tags, Many-to-Many & Embedded Schemas](building-api/advanced-data.md)
+- [Sessions](auth-sessions/sessions.md)
+- [Authentication](auth-sessions/authentication.md)
+- [Authorization](auth-sessions/authorization.md)
 
-# Testing and Error Handling
+# Part IV — Views & Templates
 
-- [Testing](testing-errors/testing.md)
-- [Error Handling](testing-errors/error-handling.md)
+- [ErlyDTL Templates](views-templates/templates.md)
+- [Building Pages](views-templates/building-pages.md)
 
-# Real-Time and Production
+# Part V — Building APIs
 
-- [WebSockets](production/websockets.md)
-- [Pub/Sub and Real-Time Feed](production/pubsub.md)
-- [Transactions, Multi & Bulk Operations](production/transactions-bulk.md)
+- [JSON APIs with Generators](building-api/json-api.md)
+- [API Documentation](building-api/openapi-tools.md)
+- [Error Handling](building-api/error-handling.md)
+
+# Part VI — Real-Time with Arizona
+
+- [Arizona Fundamentals](arizona/fundamentals.md)
+- [Live Views](arizona/live-views.md)
+- [Components](arizona/components.md)
+- [Events & Interactivity](arizona/events.md)
+- [Live Navigation](arizona/live-navigation.md)
+
+# Part VII — Real-Time Infrastructure
+
+- [WebSockets](real-time/websockets.md)
+- [Pub/Sub](real-time/pubsub.md)
+- [Building a Live Feature](real-time/live-feature.md)
+
+# Part VIII — Email with Hikyaku
+
+- [Sending Email](email/sending-email.md)
+- [Transactional Email](email/transactional-email.md)
+
+# Part IX — Testing
+
+- [Unit Testing](testing/unit-testing.md)
+- [Integration Testing](testing/integration-testing.md)
+- [Testing Real-Time](testing/testing-realtime.md)
+
+# Part X — Production
+
+- [Configuration](production/configuration.md)
+- [Observability](production/opentelemetry.md)
+- [Custom Plugins & CORS](production/plugins-cors.md)
 - [Deployment](production/deployment.md)
-
-# Going Further
-
-- [OpenAPI, Inspection & Audit](going-further/openapi-tools.md)
-- [Custom Plugins and CORS](going-further/plugins-cors.md)
-- [OpenTelemetry](going-further/opentelemetry.md)
 
 ---
 

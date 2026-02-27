@@ -87,16 +87,7 @@ not_found(Req) ->
 
 ## Rendering changeset errors as JSON
 
-When using Kura, changeset validation errors are structured data. A helper function makes it easy to return them as JSON:
-
-```erlang
-changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    lists:foldl(fun({Field, Msg}, Acc) ->
-        Key = atom_to_binary(Field),
-        Existing = maps:get(Key, Acc, []),
-        Acc#{Key => Existing ++ [Msg]}
-    end, #{}, Errors).
-```
+When using Kura, changeset validation errors are structured data. Use the `changeset_errors_to_json` helper from the [Changesets](../data-layer/changesets.md#rendering-errors-in-json-responses) chapter to convert errors into a JSON-friendly map.
 
 Use it in your controllers:
 
@@ -111,7 +102,7 @@ create(#{json := Params}) ->
     end.
 ```
 
-This returns errors like `{"errors": {"title": "can't be blank", "email": "has already been taken"}}`.
+This returns errors like `{"errors": {"title": ["can't be blank"], "email": ["has already been taken"]}}`.
 
 ## Handling controller crashes
 
@@ -201,4 +192,4 @@ To skip Nova's error page rendering entirely:
 
 ---
 
-With error handling in place, our application is more robust. Next, let's add real-time features with [WebSockets](../production/websockets.md).
+With error handling in place, our application is more robust. Next, let's explore real-time web interfaces with [Arizona Fundamentals](../arizona/fundamentals.md).

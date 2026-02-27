@@ -1,6 +1,6 @@
 # Custom Plugins and CORS
 
-In the [Plugins](../getting-started/plugins.md) chapter we saw how Nova's built-in plugins work. Now let's build custom plugins and set up CORS for our blog API.
+In the [Plugins](../foundations/plugins.md) chapter we saw how Nova's built-in plugins work. Now let's build custom plugins and set up CORS for our blog API.
 
 ## The nova_plugin behaviour
 
@@ -344,4 +344,4 @@ You should see the `Access-Control-Allow-Origin` header in the response.
 
 ---
 
-For the final chapter, let's add observability with [OpenTelemetry](opentelemetry.md).
+For the final chapter, let's prepare for [deployment](deployment.md).

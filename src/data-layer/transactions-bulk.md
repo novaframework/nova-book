@@ -102,9 +102,9 @@ Insert many records at once:
 
 ```erlang
 Posts = [
-    #{title => <<"Post 1">>, body => <<"Body 1">>, status => <<"draft">>, user_id => 1},
-    #{title => <<"Post 2">>, body => <<"Body 2">>, status => <<"draft">>, user_id => 1},
-    #{title => <<"Post 3">>, body => <<"Body 3">>, status => <<"published">>, user_id => 2}
+    #{title => <<"Post 1">>, body => <<"Body 1">>, status => draft, user_id => 1},
+    #{title => <<"Post 2">>, body => <<"Body 2">>, status => draft, user_id => 1},
+    #{title => <<"Post 3">>, body => <<"Body 3">>, status => published, user_id => 2}
 ],
 {ok, 3} = blog_repo:insert_all(post, Posts).
 ```
@@ -118,8 +118,8 @@ Update many records matching a query:
 ```erlang
 %% Publish all drafts
 Q = kura_query:from(post),
-Q1 = kura_query:where(Q, {status, <<"draft">>}),
-{ok, Count} = blog_repo:update_all(Q1, #{status => <<"published">>}).
+Q1 = kura_query:where(Q, {status, draft}),
+{ok, Count} = blog_repo:update_all(Q1, #{status => published}).
 ```
 
 `update_all` returns the count of rows affected. It applies the updates in a single SQL statement.
@@ -131,7 +131,7 @@ Delete all records matching a query:
 ```erlang
 %% Delete all archived posts
 Q = kura_query:from(post),
-Q1 = kura_query:where(Q, {status, <<"archived">>}),
+Q1 = kura_query:where(Q, {status, archived}),
 {ok, Count} = blog_repo:delete_all(Q1).
 ```
 
@@ -202,4 +202,4 @@ publish(#{bindings := #{<<"id">> := Id}}) ->
 
 ---
 
-With transactions and bulk operations covered, let's prepare the application for [deployment](deployment.md).
+That covers the data layer — schemas, changesets, CRUD, associations, and now transactions and bulk operations. Next we shift to authentication: let's add user [sessions](../auth-sessions/sessions.md) to our application.

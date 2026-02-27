@@ -235,7 +235,7 @@ routes(_Environment) ->
 
 When `plugins` is set on a route group, it **overrides** the global plugin configuration for those routes. This lets you use JSON decoding for API routes and form decoding for HTML routes without conflict.
 
-See [Custom Plugins and CORS](../going-further/plugins-cors.md) for more examples, including per-route CORS.
+See [Custom Plugins and CORS](../production/plugins-cors.md) for more examples, including per-route CORS.
 
 ## Built-in plugins summary
 
@@ -271,4 +271,4 @@ Ordering matters: `nova_correlation_plugin` runs first so all subsequent log mes
 
 ---
 
-With plugins configured to decode form data, we can now build our first [view and login page](views-auth-sessions.md).
+With plugins configured to decode form data, let's set up our [database layer](../data-layer/setup.md).

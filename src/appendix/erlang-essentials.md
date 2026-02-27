@@ -17,7 +17,7 @@ We recommend [mise](https://mise.jdx.dev/) for managing tool versions:
 curl https://mise.run | sh
 
 # Install Erlang and rebar3
-mise use erlang@27
+mise use erlang@28
 mise use rebar@3.23
 
 # Verify
@@ -30,7 +30,7 @@ Alternatively, use [asdf](https://asdf-vm.com/):
 ```shell
 asdf plugin add erlang
 asdf plugin add rebar
-asdf install erlang 27.2.2
+asdf install erlang 28.0
 asdf install rebar 3.23.0
 ```
 

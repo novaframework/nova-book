@@ -107,7 +107,7 @@ A snippet from a generated spec:
 The generated `swagger.html` loads the Swagger UI from a CDN and points it at your `openapi.json`. If you place both files in `priv/assets/`, you can serve them through Nova by adding a static route:
 
 ```erlang
-{"/docs/[...]", cowboy_static, {priv_dir, blog, "assets"}}
+{"/docs/[...]", "priv/assets", #{}}
 ```
 
 Then navigate to `http://localhost:8080/docs/swagger.html` to browse your API interactively.
@@ -264,4 +264,4 @@ Use `config` to verify settings, `middleware` to trace request processing, `audi
 
 ---
 
-Next, let's learn how to write [custom plugins and handle CORS](plugins-cors.md).
+Next, let's learn about [error handling](error-handling.md) — custom error pages, JSON error responses, and fallback controllers.

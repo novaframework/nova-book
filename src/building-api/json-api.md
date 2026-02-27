@@ -83,7 +83,7 @@ Edit this to match your actual data model:
 }
 ```
 
-This schema is picked up by the [OpenAPI generator](../going-further/openapi-tools.md) to produce API documentation automatically.
+This schema is picked up by the [OpenAPI generator](openapi-tools.md) to produce API documentation automatically.
 
 ## Filling in Kura calls
 
@@ -218,7 +218,7 @@ test_delete(_Config) ->
         httpc:request(delete, {"http://localhost:8080/posts/1", []}, [], []).
 ```
 
-Update the request bodies and assertions to match your actual API. We will cover testing in detail in the [Testing](../testing-errors/testing.md) chapter.
+Update the request bodies and assertions to match your actual API. We will cover testing in detail in the [Testing](../testing/unit-testing.md) chapter.
 
 ## Other generators
 
@@ -258,4 +258,4 @@ Generate, fill in the Kura calls, test. Three steps to a working API.
 
 ---
 
-Our posts API works with flat data. Next, let's add [associations and preloading](associations.md) to connect posts to users and comments.
+Our posts API works with flat data. Next, let's generate [API documentation and inspect our application](openapi-tools.md) with Nova's built-in tools.
