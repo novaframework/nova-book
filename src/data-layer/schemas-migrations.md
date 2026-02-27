@@ -11,11 +11,9 @@ Create `src/schemas/user.erl`:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0]).
+-export([table/0, fields/0]).
 
 table() -> <<"users">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -28,11 +26,10 @@ fields() ->
     ].
 ```
 
-A schema module implements the `kura_schema` behaviour and exports three required callbacks:
+A schema module implements the `kura_schema` behaviour and exports two required callbacks:
 
 - **`table/0`** — the PostgreSQL table name
-- **`primary_key/0`** — the primary key field name
-- **`fields/0`** — a list of `#kura_field{}` records describing each column
+- **`fields/0`** — a list of `#kura_field{}` records describing each column. Mark one field with `primary_key = true`.
 
 Each field has a `name` (atom), `type` (one of Kura's types), and optional properties like `nullable` and `default`.
 
@@ -116,11 +113,9 @@ Now let's add a post schema with an enum type for status. Create `src/schemas/po
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0]).
+-export([table/0, fields/0]).
 
 table() -> <<"posts">>.
-
-primary_key() -> id.
 
 fields() ->
     [

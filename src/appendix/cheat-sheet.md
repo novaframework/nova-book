@@ -196,10 +196,9 @@ nova_pubsub:get_local_members(Channel)
 -module(my_schema).
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
--export([table/0, fields/0, primary_key/0, associations/0, embeds/0]).
+-export([table/0, fields/0, associations/0, embeds/0]).
 
 table() -> <<"my_table">>.
-primary_key() -> id.
 
 fields() ->
     [

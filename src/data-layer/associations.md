@@ -13,11 +13,9 @@ Update `src/schemas/post.erl` to add associations:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, associations/0, changeset/2]).
+-export([table/0, fields/0, associations/0, changeset/2]).
 
 table() -> <<"posts">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -60,11 +58,9 @@ Create `src/schemas/comment.erl`:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, associations/0, changeset/2]).
+-export([table/0, fields/0, associations/0, changeset/2]).
 
 table() -> <<"comments">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -94,7 +90,7 @@ changeset(Data, Params) ->
 Update `src/schemas/user.erl` to add the `has_many` side:
 
 ```erlang
--export([table/0, fields/0, primary_key/0, associations/0, changeset/2]).
+-export([table/0, fields/0, associations/0, changeset/2]).
 
 %% ... fields() unchanged ...
 

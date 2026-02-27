@@ -11,11 +11,9 @@ Create `src/schemas/tag.erl`:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, associations/0, changeset/2]).
+-export([table/0, fields/0, associations/0, changeset/2]).
 
 table() -> <<"tags">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -45,11 +43,9 @@ The many-to-many relationship needs a join table. Create `src/schemas/posts_tags
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0]).
+-export([table/0, fields/0]).
 
 table() -> <<"posts_tags">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -138,11 +134,9 @@ Create `src/schemas/post_metadata.erl`:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, changeset/2]).
+-export([table/0, fields/0, changeset/2]).
 
 table() -> <<"_embedded">>.
-
-primary_key() -> undefined.
 
 fields() ->
     [
@@ -157,14 +151,14 @@ changeset(Data, Params) ->
     kura_changeset:validate_length(CS, meta_description, [{max, 160}]).
 ```
 
-The embedded schema looks like a regular schema but with `table()` returning a placeholder (it's never queried directly) and `primary_key()` returning `undefined`.
+The embedded schema looks like a regular schema but with `table()` returning a placeholder (it's never queried directly) and no `primary_key = true` field.
 
 ### Adding the embed to posts
 
 Update `src/schemas/post.erl` to add an `embeds/0` callback and a `metadata` JSONB field:
 
 ```erlang
--export([table/0, fields/0, primary_key/0, associations/0, embeds/0, changeset/2]).
+-export([table/0, fields/0, associations/0, embeds/0, changeset/2]).
 
 fields() ->
     [
