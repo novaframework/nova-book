@@ -15,7 +15,7 @@ Add `kura` and the `rebar3_kura` plugin to `rebar.config`:
 
 {plugins, [
     rebar3_nova,
-    {rebar3_kura, "~> 1.0"}
+    {rebar3_kura, "~> 0.5"}
 ]}.
 ```
 

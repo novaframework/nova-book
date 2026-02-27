@@ -65,19 +65,23 @@ rebar3 compile
 ```
 
 ```
-===> kura: generated src/migrations/m20260223120000_create_users.erl
+===> kura: generated src/migrations/m20260223120000_update_schema.erl
 ===> kura: migration generated
 ===> Compiling blog
 ```
 
 Kura replayed existing migration files to determine the current database state (no migrations yet = empty database), then compared that against your schema definitions and generated a migration file.
 
+```admonish info
+Kura generates a single combined migration covering all schema changes detected since the last compile. If you define both `user` and `post` schemas before the first compile, both tables will appear in the same migration file. The migration module name uses `update_schema` rather than a table-specific name.
+```
+
 ## Walking through the migration
 
 Open the generated file in `src/migrations/`:
 
 ```erlang
--module(m20260223120000_create_users).
+-module(m20260223120000_update_schema).
 -behaviour(kura_migration).
 -include_lib("kura/include/kura.hrl").
 
@@ -139,7 +143,7 @@ rebar3 compile
 ```
 
 ```
-===> kura: generated src/migrations/m20260223120100_create_posts.erl
+===> kura: generated src/migrations/m20260223120100_update_schema.erl
 ===> kura: migration generated
 ===> Compiling blog
 ```
@@ -159,8 +163,8 @@ rebar3 nova serve
 Check the logs — you should see the migrations being applied:
 
 ```
-Kura: up migration 20260223120000 (m20260223120000_create_users)
-Kura: up migration 20260223120100 (m20260223120100_create_posts)
+Kura: up migration 20260223120000 (m20260223120000_update_schema)
+Kura: up migration 20260223120100 (m20260223120100_update_schema)
 ```
 
 ### The schema_migrations table

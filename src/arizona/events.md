@@ -7,52 +7,61 @@ Arizona's event system connects user interactions in the browser to server-side 
 The `handle_event/3` callback receives three arguments:
 
 ```erlang
-handle_event(EventName, Params, State) ->
-    {noreply, NewState} |           %% Update state, re-render
-    {reply, ReplyMap, NewState} |   %% Send data back to JS caller
-    {noreply, NewState, Actions}.   %% Update state + dispatch actions
+handle_event(EventName, Params, View) ->
+    {Actions, UpdatedView}.
 ```
+
+State is managed through the `arizona_stateful` and `arizona_view` APIs — get the state from the view, update bindings, and put it back.
 
 ### Return values
 
-| Return | Effect |
+The return is always `{Actions, View}` where `Actions` is a list:
+
+| Action | Effect |
 |---|---|
-| `{noreply, State}` | Update state and re-render |
-| `{reply, Map, State}` | Send a reply to a JS `callEvent` caller |
-| `{noreply, State, [{redirect, Path}]}` | Navigate to a new page |
-| `{noreply, State, [{dispatch, Event, Payload}]}` | Dispatch an event to another component |
+| `[]` | No actions — just update state and re-render |
+| `[{redirect, Path}]` | Navigate to a new page |
+| `[{dispatch, Event, Payload}]` | Dispatch an event to another component |
 
 ## Form handling
 
 Forms are the most common interactive pattern:
 
 ```erlang
-render(#{changeset := CS, errors := Errors} = _State) ->
-    arizona:render("
-        <form az-submit=\"save\" az-change=\"validate\">
-            <input type=\"text\" name=\"title\"
-                   value=\"~{maps:get(title, kura_changeset:apply_changes(CS))}\" />
-            ~{render_error(Errors, title)}
+render(Bindings) ->
+    CS = arizona_template:get_binding(changeset, Bindings),
+    Errors = arizona_template:get_binding(errors, Bindings),
+    arizona_template:from_html(~"""
+    <form az-submit="save" az-change="validate">
+        <input type="text" name="title"
+               value="{maps:get(title, kura_changeset:apply_changes(CS))}" />
+        {render_error(Errors, title)}
 
-            <textarea name=\"body\">~{maps:get(body, kura_changeset:apply_changes(CS))}</textarea>
-            ~{render_error(Errors, body)}
+        <textarea name="body">{maps:get(body, kura_changeset:apply_changes(CS))}</textarea>
+        {render_error(Errors, body)}
 
-            <button type=\"submit\">Save</button>
-        </form>
-    ").
+        <button type="submit">Save</button>
+    </form>
+    """).
 
-handle_event(<<"validate">>, Params, State) ->
+handle_event(<<"validate">>, Params, View) ->
+    State = arizona_view:get_state(View),
     CS = post:changeset(#{}, Params),
     Errors = changeset_errors_to_json(CS),
-    {noreply, State#{changeset => CS, errors => Errors}};
+    S1 = arizona_stateful:put_binding(changeset, CS, State),
+    S2 = arizona_stateful:put_binding(errors, Errors, S1),
+    {[], arizona_view:update_state(S2, View)};
 
-handle_event(<<"save">>, Params, State) ->
+handle_event(<<"save">>, Params, View) ->
     CS = post:changeset(#{}, Params),
     case blog_repo:insert(CS) of
         {ok, Post} ->
-            {noreply, State, [{redirect, "/posts/" ++ integer_to_list(maps:get(id, Post))}]};
+            {[{redirect, "/posts/" ++ integer_to_list(maps:get(id, Post))}], View};
         {error, CS1} ->
-            {noreply, State#{changeset => CS1, errors => changeset_errors_to_json(CS1)}}
+            State = arizona_view:get_state(View),
+            S1 = arizona_stateful:put_binding(changeset, CS1, State),
+            S2 = arizona_stateful:put_binding(errors, changeset_errors_to_json(CS1), S1),
+            {[], arizona_view:update_state(S2, View)}
     end.
 ```
 
@@ -62,7 +71,7 @@ The `render_error/2` helper formats a field's error for display:
 render_error(Errors, Field) ->
     case maps:get(atom_to_binary(Field), Errors, []) of
         [] -> <<>>;
-        [Msg | _] -> arizona:render("<span class=\"error\">~{Msg}</span>")
+        [Msg | _] -> arizona_template:from_html(~"<span class=\"error\">{Msg}</span>")
     end.
 ```
 
@@ -79,7 +88,7 @@ Use `az-value-*` attributes to send data with events:
 In `handle_event`:
 
 ```erlang
-handle_event(<<"delete">>, #{<<"id">> := Id, <<"type">> := Type}, State) ->
+handle_event(<<"delete">>, #{<<"id">> := Id, <<"type">> := Type}, View) ->
     ...
 ```
 
@@ -92,11 +101,13 @@ handle_event(<<"delete">>, #{<<"id">> := Id, <<"type">> := Type}, State) ->
 The `az-debounce` attribute delays the event by the specified milliseconds — useful for search-as-you-type to avoid flooding the server.
 
 ```erlang
-handle_event(<<"search">>, #{<<"value">> := Query}, State) ->
+handle_event(<<"search">>, #{<<"value">> := Query}, View) ->
     Q = kura_query:from(post),
     Q1 = kura_query:where(Q, {title, ilike, <<"%", Query/binary, "%">>}),
     {ok, Results} = blog_repo:all(Q1),
-    {noreply, State#{results => Results}}.
+    State = arizona_view:get_state(View),
+    NewState = arizona_stateful:put_binding(results, Results, State),
+    {[], arizona_view:update_state(NewState, View)}.
 ```
 
 ## Client-side JavaScript hooks
@@ -120,10 +131,9 @@ const result = await arizona.callEventFrom("#search", "search", {q: "nova"});
 On the server:
 
 ```erlang
-%% For callEvent — must return {reply, ...}
-handle_event(<<"get_data">>, #{<<"id">> := Id}, State) ->
+handle_event(<<"get_data">>, #{<<"id">> := Id}, View) ->
     {ok, Post} = blog_repo:get(post, binary_to_integer(Id)),
-    {reply, #{title => maps:get(title, Post)}, State}.
+    {[{dispatch, <<"get_data_reply">>, #{title => maps:get(title, Post)}}], View}.
 ```
 
 ## Actions
@@ -131,14 +141,17 @@ handle_event(<<"get_data">>, #{<<"id">> := Id}, State) ->
 Actions let you trigger side effects alongside state updates:
 
 ```erlang
-handle_event(<<"publish">>, _Params, #{post := Post} = State) ->
+handle_event(<<"publish">>, _Params, View) ->
+    State = arizona_view:get_state(View),
+    Post = arizona_stateful:get_binding(post, State),
     CS = post:changeset(Post, #{<<"status">> => <<"published">>}),
     {ok, Updated} = blog_repo:update(CS),
+    NewState = arizona_stateful:put_binding(post, Updated, State),
     Actions = [
         {dispatch, <<"post_published">>, #{id => maps:get(id, Updated)}},
         {redirect, "/posts/" ++ integer_to_list(maps:get(id, Updated))}
     ],
-    {noreply, State#{post => Updated}, Actions}.
+    {Actions, arizona_view:update_state(NewState, View)}.
 ```
 
 ---

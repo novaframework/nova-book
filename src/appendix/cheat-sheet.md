@@ -407,24 +407,40 @@ rebar3 kura setup --name my_repo
 ### Live view callbacks
 
 ```erlang
--behaviour(arizona_live_view).
+-compile({parse_transform, arizona_parse_transform}).
+-behaviour(arizona_view).
 
-mount(Params) ->
-    {ok, InitialState}.
+mount(Params, Req) ->
+    arizona_view:new(?MODULE, #{
+        id => ~"my_view",
+        title => <<"Hello">>
+    }, none).
 
-render(State) ->
-    arizona:render("
-        <h1>~{maps:get(title, State)}</h1>
-        <button az-click=\"my_event\">Click</button>
-    ").
+render(Bindings) ->
+    arizona_template:from_html(~"""
+    <h1>{arizona_template:get_binding(title, Bindings)}</h1>
+    <button az-click="my_event">Click</button>
+    """).
 
-handle_event(EventName, Params, State) ->
-    {noreply, NewState} |
-    {reply, ReplyMap, NewState} |
-    {noreply, NewState, Actions}.
+handle_event(EventName, Params, View) ->
+    State = arizona_view:get_state(View),
+    NewState = arizona_stateful:put_binding(key, value, State),
+    {Actions, arizona_view:update_state(NewState, View)}.
 
-handle_info(ErlangMessage, State) ->
-    {noreply, NewState}.
+handle_info(ErlangMessage, View) ->
+    {Actions, UpdatedView}.
+```
+
+### State management
+
+```erlang
+%% Read state from view
+State = arizona_view:get_state(View),
+Value = arizona_stateful:get_binding(key, State),
+
+%% Update state
+NewState = arizona_stateful:put_binding(key, NewValue, State),
+UpdatedView = arizona_view:update_state(NewState, View).
 ```
 
 ### Event bindings
@@ -451,22 +467,29 @@ handle_info(ErlangMessage, State) ->
 ### Actions
 
 ```erlang
-{noreply, State, [{redirect, "/path"}]}
-{noreply, State, [{patch, "/path?page=2"}]}
-{noreply, State, [{dispatch, EventName, Payload}]}
+{[{redirect, "/path"}], View}
+{[{patch, "/path?page=2"}], View}
+{[{dispatch, EventName, Payload}], View}
 ```
 
 ### Components
 
 ```erlang
-%% Stateless — pure function
-my_component(#{title := Title}) ->
-    arizona:render("<h2>~{Title}</h2>").
+%% Stateless — pure function (no behaviour)
+my_component(Bindings) ->
+    arizona_template:from_html(~"<h2>{maps:get(title, Bindings)}</h2>").
+
+%% Render stateless in template
+arizona_template:render_stateless(my_module, my_component, #{title => ~"Hi"})
 
 %% Stateful — behaviour with mount/render/handle_event
--behaviour(arizona_live_component).
-%% Must have unique id when embedded
-arizona:component(my_component, #{id => "my-id", ...}).
+-behaviour(arizona_stateful).
+
+mount(Bindings) ->
+    arizona_stateful:new(?MODULE, #{id => maps:get(id, Bindings), ...}).
+
+%% Render stateful in template (must have unique id)
+arizona_template:render_stateful(my_component, #{id => ~"my-id", ...})
 ```
 
 ### Client JS API

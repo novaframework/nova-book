@@ -98,25 +98,30 @@ test_ws_feed(_Config) ->
 
 ## Testing Arizona live views
 
-Test live view callbacks directly as unit tests:
+Arizona live views use opaque state types (`arizona_view` and `arizona_stateful`), so unit testing callbacks directly requires constructing views with `arizona_view:new/3`. Test the mount and event callbacks:
 
 ```erlang
 -module(blog_counter_live_tests).
 -include_lib("eunit/include/eunit.hrl").
 
 mount_test() ->
-    {ok, State} = blog_counter_live:mount(#{}),
-    ?assertEqual(0, maps:get(count, State)).
+    View = blog_counter_live:mount(#{}, undefined),
+    State = arizona_view:get_state(View),
+    ?assertEqual(0, arizona_stateful:get_binding(count, State)).
 
 increment_test() ->
-    {noreply, State} =
-        blog_counter_live:handle_event(<<"increment">>, #{}, #{count => 5}),
-    ?assertEqual(6, maps:get(count, State)).
+    View = blog_counter_live:mount(#{}, undefined),
+    {_Actions, View1} =
+        blog_counter_live:handle_event(<<"increment">>, #{}, View),
+    State = arizona_view:get_state(View1),
+    ?assertEqual(1, arizona_stateful:get_binding(count, State)).
 
 decrement_test() ->
-    {noreply, State} =
-        blog_counter_live:handle_event(<<"decrement">>, #{}, #{count => 5}),
-    ?assertEqual(4, maps:get(count, State)).
+    View = blog_counter_live:mount(#{}, undefined),
+    {_Actions, View1} =
+        blog_counter_live:handle_event(<<"decrement">>, #{}, View),
+    State = arizona_view:get_state(View1),
+    ?assertEqual(-1, arizona_stateful:get_binding(count, State)).
 ```
 
 ### Testing live view rendering
@@ -135,10 +140,15 @@ render_shows_count_test() ->
 ```erlang
 handle_info_new_comment_test() ->
     Comment = #{id => 1, body => <<"Nice!">>, author => #{username => <<"bob">>}},
-    State = #{comments => []},
+    %% Build a view with empty comments
+    View = arizona_view:new(blog_post_live, #{
+        id => ~"test", comments => [], post => #{}, new_comment => <<>>,
+        channel => test_channel
+    }, none),
     Msg = {nova_pubsub, comments_1, self(), "new_comment", Comment},
-    {noreply, NewState} = blog_post_live:handle_info(Msg, State),
-    ?assertEqual([Comment], maps:get(comments, NewState)).
+    {_Actions, NewView} = blog_post_live:handle_info(Msg, View),
+    State = arizona_view:get_state(NewView),
+    ?assertEqual([Comment], arizona_stateful:get_binding(comments, State)).
 ```
 
 ## Test structure
