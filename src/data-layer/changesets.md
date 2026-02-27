@@ -23,11 +23,9 @@ Let's add a `changeset/2` function to the post schema. Update `src/schemas/post.
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, changeset/2]).
+-export([table/0, fields/0, changeset/2]).
 
 table() -> <<"posts">>.
-
-primary_key() -> id.
 
 fields() ->
     [
@@ -63,11 +61,9 @@ Update `src/schemas/user.erl`:
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, primary_key/0, changeset/2]).
+-export([table/0, fields/0, changeset/2]).
 
 table() -> <<"users">>.
-
-primary_key() -> id.
 
 fields() ->
     [
