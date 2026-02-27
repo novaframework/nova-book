@@ -6,11 +6,12 @@ Let's bring everything together — Arizona live views, Nova PubSub, and Kura �
 
 ```erlang
 -module(blog_post_live).
--behaviour(arizona_live_view).
+-compile({parse_transform, arizona_parse_transform}).
+-behaviour(arizona_view).
 
--export([mount/1, render/1, handle_event/3, handle_info/2]).
+-export([mount/2, render/1, handle_event/3, handle_info/2]).
 
-mount(#{<<"id">> := PostId}) ->
+mount(#{<<"id">> := PostId}, _Req) ->
     Id = binary_to_integer(PostId),
     {ok, Post} = blog_repo:get(post, Id),
     Post1 = blog_repo:preload(post, Post, [{comments, [author]}]),
@@ -19,36 +20,47 @@ mount(#{<<"id">> := PostId}) ->
     Channel = list_to_atom("comments_" ++ integer_to_list(Id)),
     nova_pubsub:join(Channel),
 
-    {ok, #{post => Post1,
-           comments => maps:get(comments, Post1, []),
-           new_comment => <<>>,
-           channel => Channel}}.
+    arizona_view:new(?MODULE, #{
+        id => list_to_binary("post_live_" ++ integer_to_list(Id)),
+        post => Post1,
+        comments => maps:get(comments, Post1, []),
+        new_comment => <<>>,
+        channel => Channel
+    }, none).
 
-render(#{post := Post, comments := Comments} = State) ->
-    arizona:render("
-        <article>
-            <h1>~{maps:get(title, Post)}</h1>
-            <div class=\"body\">~{maps:get(body, Post)}</div>
-        </article>
+render(Bindings) ->
+    Post = arizona_template:get_binding(post, Bindings),
+    Comments = arizona_template:get_binding(comments, Bindings),
+    arizona_template:from_html(~"""
+    <article>
+        <h1>{maps:get(title, Post)}</h1>
+        <div class="body">{maps:get(body, Post)}</div>
+    </article>
 
-        <section class=\"comments\">
-            <h2>Comments (~{integer_to_list(length(Comments))})</h2>
+    <section class="comments">
+        <h2>Comments ({integer_to_list(length(Comments))})</h2>
 
-            ~{[render_comment(C) || C <- Comments]}
+        {arizona_template:render_list(Comments, fun(C) ->
+            render_comment(C)
+        end)}
 
-            <form az-submit=\"post_comment\">
-                <textarea name=\"body\" placeholder=\"Write a comment...\"
-                          az-change=\"update_comment\">~{maps:get(new_comment, State)}</textarea>
-                <button type=\"submit\">Post Comment</button>
-            </form>
-        </section>
-    ").
+        <form az-submit="post_comment">
+            <textarea name="body" placeholder="Write a comment..."
+                      az-change="update_comment">{arizona_template:get_binding(new_comment, Bindings)}</textarea>
+            <button type="submit">Post Comment</button>
+        </form>
+    </section>
+    """).
 
-handle_event(<<"update_comment">>, #{<<"body">> := Body}, State) ->
-    {noreply, State#{new_comment => Body}};
+handle_event(<<"update_comment">>, #{<<"body">> := Body}, View) ->
+    State = arizona_view:get_state(View),
+    NewState = arizona_stateful:put_binding(new_comment, Body, State),
+    {[], arizona_view:update_state(NewState, View)};
 
-handle_event(<<"post_comment">>, #{<<"body">> := Body},
-             #{post := Post, channel := Channel} = State) ->
+handle_event(<<"post_comment">>, #{<<"body">> := Body}, View) ->
+    State = arizona_view:get_state(View),
+    Post = arizona_stateful:get_binding(post, State),
+    Channel = arizona_stateful:get_binding(channel, State),
     PostId = maps:get(id, Post),
     CS = comment:changeset(#{}, #{<<"body">> => Body,
                                    <<"post_id">> => PostId,
@@ -58,25 +70,28 @@ handle_event(<<"post_comment">>, #{<<"body">> := Body},
             Comment1 = blog_repo:preload(comment, Comment, [author]),
             %% Broadcast to all viewers
             nova_pubsub:broadcast(Channel, "new_comment", Comment1),
-            {noreply, State#{new_comment => <<>>}};
+            NewState = arizona_stateful:put_binding(new_comment, <<>>, State),
+            {[], arizona_view:update_state(NewState, View)};
         {error, _} ->
-            {noreply, State}
+            {[], View}
     end.
 
 %% Receive broadcasts from PubSub
-handle_info({nova_pubsub, _Channel, _Sender, "new_comment", Comment},
-            #{comments := Comments} = State) ->
-    {noreply, State#{comments => Comments ++ [Comment]}}.
+handle_info({nova_pubsub, _Channel, _Sender, "new_comment", Comment}, View) ->
+    State = arizona_view:get_state(View),
+    Comments = arizona_stateful:get_binding(comments, State),
+    NewState = arizona_stateful:put_binding(comments, Comments ++ [Comment], State),
+    {[], arizona_view:update_state(NewState, View)}.
 
 %% Helpers
 
 render_comment(Comment) ->
-    arizona:render("
-        <div class=\"comment\">
-            <strong>~{maps:get(username, maps:get(author, Comment))}</strong>
-            <p>~{maps:get(body, Comment)}</p>
-        </div>
-    ").
+    arizona_template:from_html(~"""
+    <div class="comment">
+        <strong>{maps:get(username, maps:get(author, Comment))}</strong>
+        <p>{maps:get(body, Comment)}</p>
+    </div>
+    """).
 ```
 
 ## How it works
@@ -121,21 +136,23 @@ Both live views and WebSocket handlers receive the broadcast — any process tha
 For a snappier feel, update the UI immediately and reconcile later:
 
 ```erlang
-handle_event(<<"post_comment">>, #{<<"body">> := Body},
-             #{post := Post, comments := Comments} = State) ->
+handle_event(<<"post_comment">>, #{<<"body">> := Body}, View) ->
+    State = arizona_view:get_state(View),
+    Post = arizona_stateful:get_binding(post, State),
+    Comments = arizona_stateful:get_binding(comments, State),
     PostId = maps:get(id, Post),
     %% Optimistic: show the comment immediately
     TempComment = #{body => Body, author => #{username => <<"you">>},
                     id => temp, post_id => PostId},
-    State1 = State#{comments => Comments ++ [TempComment],
-                     new_comment => <<>>},
+    S1 = arizona_stateful:put_binding(comments, Comments ++ [TempComment], State),
+    S2 = arizona_stateful:put_binding(new_comment, <<>>, S1),
 
     %% Persist in background
     CS = comment:changeset(#{}, #{<<"body">> => Body,
                                    <<"post_id">> => PostId,
                                    <<"user_id">> => 1}),
     blog_repo:insert(CS),
-    {noreply, State1}.
+    {[], arizona_view:update_state(S2, View)}.
 ```
 
 ---

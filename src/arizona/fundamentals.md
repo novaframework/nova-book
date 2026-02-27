@@ -1,6 +1,6 @@
 # Arizona Fundamentals
 
-So far our blog renders HTML on the server and sends complete pages to the browser. For real-time interactivity — updating a comment section without a page reload, live form validation, instant notifications — we need something more. [Arizona](https://github.com/arizona-framework/arizona_core) is a real-time web framework for Erlang, inspired by Phoenix LiveView, that brings server-rendered interactivity to Nova applications.
+So far our blog renders HTML on the server and sends complete pages to the browser. For real-time interactivity — updating a comment section without a page reload, live form validation, instant notifications — we need something more. [Arizona](https://github.com/Taure/arizona_core) is a real-time web framework for Erlang, inspired by Phoenix LiveView, that brings server-rendered interactivity to Nova applications.
 
 ```admonish info
 Arizona requires OTP 28+. Check your Erlang version with `erl -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' -noshell`.
@@ -21,11 +21,11 @@ No full page reloads. No client-side framework. The state lives on the server in
 Arizona uses **compile-time template optimization** via Erlang parse transforms. When you write a template:
 
 ```erlang
-render(State) ->
-    arizona:render("
-        <h1>Hello, ~{maps:get(name, State)}!</h1>
-        <p>You have ~{integer_to_list(maps:get(count, State))} messages.</p>
-    ").
+render(Bindings) ->
+    arizona_template:from_html(~"""
+    <h1>Hello, {arizona_template:get_binding(name, Bindings)}!</h1>
+    <p>You have {integer_to_list(arizona_template:get_binding(count, Bindings))} messages.</p>
+    """).
 ```
 
 At compile time, Arizona:
@@ -35,6 +35,10 @@ At compile time, Arizona:
 
 This means when `count` changes but `name` doesn't, only the second `<p>` is re-rendered and sent to the client.
 
+```admonish info
+Templates use OTP 28 sigil strings (`~"..."` or `~"""..."""` for multi-line). Dynamic expressions are wrapped in `{...}` inside the template. All Arizona modules must include `-compile({parse_transform, arizona_parse_transform}).` for the template system to work.
+```
+
 ## Adding Arizona to your project
 
 Add the dependency to `rebar.config`:
@@ -43,7 +47,7 @@ Add the dependency to `rebar.config`:
 {deps, [
     nova,
     {kura, "~> 1.0"},
-    {arizona_core, {git, "https://github.com/arizona-framework/arizona_core.git", {branch, "main"}}}
+    {arizona_core, {git, "https://github.com/Taure/arizona_core.git", {branch, "main"}}}
 ]}.
 ```
 
@@ -61,19 +65,19 @@ Add `arizona_core` to your application dependencies in `src/blog.app.src`:
 
 ## Template syntax
 
-Arizona supports three template syntaxes. The HTML string syntax is the most common:
+Arizona supports three template syntaxes. The HTML sigil string syntax is the most common:
 
 ```erlang
-%% Embedded Erlang expressions with ~{...}
-arizona:render("
-    <div class=\"post\">
-        <h2>~{maps:get(title, State)}</h2>
-        <p>~{maps:get(body, State)}</p>
-    </div>
-")
+%% Embedded Erlang expressions with {...}
+arizona_template:from_html(~"""
+<div class="post">
+    <h2>{arizona_template:get_binding(title, Bindings)}</h2>
+    <p>{arizona_template:get_binding(body, Bindings)}</p>
+</div>
+""")
 ```
 
-Expressions inside `~{...}` are evaluated at render time and tracked for differential updates.
+Expressions inside `{...}` are evaluated at render time and tracked for differential updates. Use `arizona_template:get_binding/2` to access bindings with automatic dependency tracking.
 
 ## The connection lifecycle
 

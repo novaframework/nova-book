@@ -15,7 +15,7 @@ Add `kura` and the `rebar3_kura` plugin to `rebar.config`:
 
 {plugins, [
     rebar3_nova,
-    {rebar3_kura, "~> 1.0"}
+    {rebar3_kura, "~> 0.5"}
 ]}.
 ```
 
@@ -112,43 +112,13 @@ docker compose up -d
 
 Notice that `config/0` uses `application:get_env(blog, database, <<"blog_dev">>)` for the database name. This means you can override it per environment through `sys.config` without touching the module.
 
-For example, to use a separate test database, add a `blog` section to your test sys.config:
+The `blog_dev` default in `config/0` works without any sys.config entry. If you ever need a separate database for production or CI, override it with an application environment variable:
 
 ```erlang
-[
-  {kernel, [
-    {logger_level, debug},
-    {logger, [
-      {handler, default, logger_std_h,
-        #{formatter => {flatlog, #{
-            map_depth => 3,
-            term_depth => 50,
-            colored => true,
-            template => [colored_start, "[\033[1m", level, "\033[0m",
-                         colored_start, "] ", msg, "\n", colored_end]
-          }}}}
-    ]}
-  ]},
-  {nova, [
-         {use_stacktrace, true},
-         {environment, dev},
-         {cowboy_configuration, #{port => 8080}},
-         {dev_mode, true},
-         {bootstrap_application, blog},
-         {plugins, [
-                    {pre_request, nova_request_plugin, #{
-                        read_urlencoded_body => true,
-                        decode_json_body => true
-                    }}
-                   ]}
-        ]},
-  {blog, [
-         {database, <<"blog_test">>}
-        ]}
-].
+{blog, [
+       {database, <<"blog_prod">>}
+      ]}
 ```
-
-The `blog_dev` default in `config/0` works for development without any sys.config entry. Override just the keys you need per environment.
 
 ## Starting the repo in the supervisor
 

@@ -7,8 +7,8 @@ Traditional page navigation triggers a full HTTP request-response cycle. Arizona
 A live redirect navigates to a new live view, replacing the current one:
 
 ```erlang
-handle_event(<<"go_to_post">>, #{<<"id">> := Id}, State) ->
-    {noreply, State, [{redirect, "/posts/" ++ binary_to_list(Id)}]}.
+handle_event(<<"go_to_post">>, #{<<"id">> := Id}, View) ->
+    {[{redirect, "/posts/" ++ binary_to_list(Id)}], View}.
 ```
 
 In templates, use `az-live-redirect`:
@@ -28,7 +28,7 @@ No HTTP request. No page flash.
 
 ## Live patches
 
-A live patch updates the URL and re-triggers `mount/1` on the **same** live view. Useful for filtering, pagination, and search:
+A live patch updates the URL and re-triggers `mount/2` on the **same** live view. Useful for filtering, pagination, and search:
 
 ```html
 <a href="/posts?page=2" az-live-patch>Page 2</a>
@@ -36,12 +36,17 @@ A live patch updates the URL and re-triggers `mount/1` on the **same** live view
 ```
 
 ```erlang
-mount(Params) ->
+mount(Params, _Req) ->
     Page = binary_to_integer(maps:get(<<"page">>, Params, <<"1">>)),
     Status = maps:get(<<"status">>, Params, <<"all">>),
     Q = build_query(Status, Page),
     {ok, Posts} = blog_repo:all(Q),
-    {ok, #{posts => Posts, page => Page, status => Status}}.
+    arizona_view:new(?MODULE, #{
+        id => ~"post_list",
+        posts => Posts,
+        page => Page,
+        status => Status
+    }, none).
 ```
 
 The same live view, different URL, different state. The WebSocket connection stays alive.
@@ -54,9 +59,9 @@ Live patches make the URL the source of truth for view state. This means:
 - Browser history is preserved
 
 ```erlang
-handle_event(<<"filter">>, #{<<"status">> := Status}, State) ->
+handle_event(<<"filter">>, #{<<"status">> := Status}, View) ->
     Path = "/posts?status=" ++ binary_to_list(Status),
-    {noreply, State, [{patch, Path}]}.
+    {[{patch, Path}], View}.
 ```
 
 The `{patch, Path}` action updates the URL and re-mounts with the new params.
