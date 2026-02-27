@@ -34,7 +34,7 @@ fields() ->
         #kura_field{name = id, type = id, primary_key = true, nullable = false},
         #kura_field{name = title, type = string, nullable = false},
         #kura_field{name = body, type = text},
-        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = <<"draft">>},
+        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = draft},
         #kura_field{name = user_id, type = integer},
         #kura_field{name = inserted_at, type = utc_datetime},
         #kura_field{name = updated_at, type = utc_datetime}
@@ -186,8 +186,8 @@ The response looks like:
 ```json
 {
   "errors": {
-    "title": "can't be blank",
-    "body": "can't be blank"
+    "title": ["can't be blank"],
+    "body": ["can't be blank"]
   }
 }
 ```

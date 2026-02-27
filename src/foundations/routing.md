@@ -54,7 +54,7 @@ routes(_Environment) ->
       }].
 ```
 
-We will implement the `login/1` function in the [Views, Auth & Sessions](views-auth-sessions.md) chapter.
+We will implement the `login/1` function in the [Sessions](../auth-sessions/sessions.md) chapter.
 
 ## Route parameters
 
@@ -131,7 +131,7 @@ logout(_Req) ->
     {redirect, "/login"}.
 ```
 
-Each of these has extended forms for setting custom status codes and headers (e.g. `{json, StatusCode, Headers, Data}`). We'll use those in the [JSON API](../building-api/json-api.md) and [Views, Auth & Sessions](views-auth-sessions.md) chapters.
+Each of these has extended forms for setting custom status codes and headers (e.g. `{json, StatusCode, Headers, Data}`). We'll use those in the [JSON API](../building-api/json-api.md) and [Sessions](../auth-sessions/sessions.md) chapters.
 
 ## Prefixes for grouping
 
@@ -190,7 +190,7 @@ index(#{auth_data := User}) ->
     {ok, [{username, maps:get(name, User)}]}.
 ```
 
-We'll build a full authentication flow in [Views, Auth & Sessions](views-auth-sessions.md).
+We'll build a full authentication flow in [Authentication](../auth-sessions/authentication.md).
 
 ## Error routes
 
@@ -212,10 +212,10 @@ The error controller works like any other controller:
 
 ```erlang
 not_found(_Req) ->
-    {status, 404, #{}, <<"Page not found">>}.
+    {status, 404, #{}, #{error => <<"not found">>}}.
 ```
 
-See the [Error Handling](../testing-errors/error-handling.md) chapter for rendering custom error templates.
+See the [Error Handling](../building-api/error-handling.md) chapter for rendering custom error templates.
 
 ## Static file serving
 
@@ -281,4 +281,4 @@ dev_routes() ->
 
 ---
 
-Next, let's look at [plugins](plugins.md) — the middleware layer that processes requests before and after your controllers.
+Next, let's look at [controllers](controllers.md) — the functions that handle requests and return responses.

@@ -65,7 +65,7 @@ For more complex lookups, `one/1` returns a single result from a query:
 
 ```erlang
 Q = kura_query:from(post),
-Q1 = kura_query:where(Q, {status, <<"published">>}),
+Q1 = kura_query:where(Q, {status, published}),
 Q2 = kura_query:order_by(Q1, [{inserted_at, desc}]),
 {ok, Latest} = blog_repo:one(Q2).
 ```
@@ -101,7 +101,7 @@ The query builder composes — chain functions to build up complex queries:
 ```erlang
 %% Filter by status
 Q = kura_query:from(post),
-Q1 = kura_query:where(Q, {status, <<"published">>}),
+Q1 = kura_query:where(Q, {status, published}),
 {ok, Published} = blog_repo:all(Q1).
 
 %% Order by insertion date, newest first
@@ -128,7 +128,7 @@ kura_query:where(Q, {user_id, '>', 5})
 kura_query:where(Q, {inserted_at, '>=', {{2026,1,1},{0,0,0}}})
 
 %% IN clause
-kura_query:where(Q, {status, in, [<<"draft">>, <<"published">>]})
+kura_query:where(Q, {status, in, [draft, published]})
 
 %% LIKE / ILIKE
 kura_query:where(Q, {title, ilike, <<"%nova%">>})
@@ -138,19 +138,19 @@ kura_query:where(Q, {body, is_nil})
 kura_query:where(Q, {body, is_not_nil})
 
 %% OR conditions
-kura_query:where(Q, {'or', [{status, <<"draft">>}, {status, <<"archived">>}]})
+kura_query:where(Q, {'or', [{status, draft}, {status, archived}]})
 
 %% NOT IN clause
-kura_query:where(Q, {status, not_in, [<<"archived">>, <<"deleted">>]})
+kura_query:where(Q, {status, not_in, [archived, deleted]})
 
 %% BETWEEN
 kura_query:where(Q, {user_id, between, {1, 100}})
 
 %% NOT wrapper
-kura_query:where(Q, {'not', {status, <<"draft">>}})
+kura_query:where(Q, {'not', {status, draft}})
 
 %% AND conditions (multiple where calls are AND by default)
-Q1 = kura_query:where(Q, {status, <<"published">>}),
+Q1 = kura_query:where(Q, {status, published}),
 Q2 = kura_query:where(Q1, {user_id, 1}).
 ```
 
@@ -295,4 +295,4 @@ No SQL strings anywhere. The query builder composes, the repo executes.
 
 ---
 
-This gives us a working API for a single resource. Next, let's use the [code generators](../building-api/json-api.md) to scaffold resources faster and add JSON schemas for documentation.
+This gives us a working API for a single resource. Next, let's add [associations and preloading](associations.md) to connect posts to users and comments.

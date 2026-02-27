@@ -74,13 +74,10 @@ Key differences:
                    ]}
         ]},
   {blog, [
-      {repo, #{
-          hostname => "${DB_HOST}",
-          port => 5432,
-          database => "${DB_NAME}",
-          username => "${DB_USER}",
-          password => "${DB_PASSWORD}"
-      }}
+      {database, <<"${DB_NAME}">>},
+      {db_host, <<"${DB_HOST}">>},
+      {db_user, <<"${DB_USER}">>},
+      {db_password, <<"${DB_PASSWORD}">>}
   ]}
 ].
 ```
@@ -124,7 +121,7 @@ rebar3 nova release
 ===> Release successfully assembled: _build/prod/rel/blog
 ```
 
-This ensures your deployed application always ships with up-to-date API documentation. See [OpenAPI, Inspection & Audit](../going-further/openapi-tools.md) for details.
+This ensures your deployed application always ships with up-to-date API documentation. See [OpenAPI, Inspection & Audit](../building-api/openapi-tools.md) for details.
 
 Start it:
 
@@ -226,7 +223,7 @@ sudo systemctl start blog
 A multi-stage Dockerfile:
 
 ```dockerfile
-FROM erlang:27 AS builder
+FROM erlang:28 AS builder
 
 WORKDIR /app
 COPY . .
@@ -259,7 +256,7 @@ docker run -p 8080:8080 \
 ```
 
 ```admonish tip
-For sub-applications like Nova Admin, add them to your release deps and `nova_apps` config. They are bundled automatically in the release. See [Custom Plugins and CORS](../going-further/plugins-cors.md) for plugin configuration that carries over to production.
+For sub-applications like Nova Admin, add them to your release deps and `nova_apps` config. They are bundled automatically in the release. See [Custom Plugins and CORS](plugins-cors.md) for plugin configuration that carries over to production.
 ```
 
 ## Summary
@@ -275,4 +272,4 @@ OTP releases are self-contained — once built, everything you need is in a sing
 
 ---
 
-Now let's explore more advanced features, starting with [OpenAPI, Inspection & Audit](../going-further/openapi-tools.md).
+That wraps up the main content. For quick reference, see the [Erlang Essentials](../appendix/erlang-essentials.md) appendix and the [Cheat Sheet](../appendix/cheat-sheet.md).

@@ -90,7 +90,7 @@ create(#{json := Params}) ->
             {json, 201, #{}, post_to_json(Post)};
         {error, #kura_changeset{} = CS1} ->
             {json, 422, #{}, #{errors => changeset_errors_to_json(CS1)}}
-    end;
+    end.
 ```
 
 Do the same for updates and deletes:
@@ -103,11 +103,18 @@ nova_pubsub:broadcast(posts, "post_updated", post_to_json(Updated)),
 nova_pubsub:broadcast(posts, "post_deleted", #{id => binary_to_integer(Id)}),
 ```
 
-And for comments:
+And for comments (using a `comment_to_json/1` helper that follows the same pattern as `post_to_json/1`):
 
 ```erlang
 %% After creating a comment:
 nova_pubsub:broadcast(comments, "comment_created", comment_to_json(Comment)),
+```
+
+The `comment_to_json/1` helper follows the same pattern as `post_to_json/1`:
+
+```erlang
+comment_to_json(#{id := Id, body := Body, post_id := PostId, inserted_at := At}) ->
+    #{id => Id, body => Body, post_id => PostId, inserted_at => At}.
 ```
 
 ### Adding the route
@@ -253,4 +260,4 @@ Processes can join multiple channels and pattern match on channel and topic in t
 
 ---
 
-Next, let's look at [transactions, multi, and bulk operations](transactions-bulk.md) for atomic and efficient data operations.
+Next, let's build a complete [live feature](live-feature.md) combining WebSockets and pub/sub.

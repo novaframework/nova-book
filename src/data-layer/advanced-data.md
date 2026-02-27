@@ -171,7 +171,7 @@ fields() ->
         #kura_field{name = id, type = id, primary_key = true, nullable = false},
         #kura_field{name = title, type = string, nullable = false},
         #kura_field{name = body, type = text},
-        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = <<"draft">>},
+        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = draft},
         #kura_field{name = user_id, type = integer},
         #kura_field{name = metadata, type = {embed, embeds_one, post_metadata}},
         #kura_field{name = inserted_at, type = utc_datetime},
@@ -277,4 +277,4 @@ create(#{json := Params}) ->
 
 ---
 
-We now have a rich data model with associations, many-to-many relationships, and embedded schemas. Next, let's write proper [tests](../testing-errors/testing.md) for our application.
+We now have a rich data model with associations, many-to-many relationships, and embedded schemas. Next, let's explore [advanced queries](advanced-queries.md) for complex data retrieval.
