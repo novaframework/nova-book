@@ -69,6 +69,7 @@
 - [Configuration](production/configuration.md)
 - [Observability](production/opentelemetry.md)
 - [Custom Plugins & CORS](production/plugins-cors.md)
+- [Security](production/security.md)
 - [Deployment](production/deployment.md)
 
 ---

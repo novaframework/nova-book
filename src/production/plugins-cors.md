@@ -344,4 +344,4 @@ You should see the `Access-Control-Allow-Origin` header in the response.
 
 ---
 
-For the final chapter, let's prepare for [deployment](deployment.md).
+Next, let's cover [security](security.md) best practices before preparing for deployment.
