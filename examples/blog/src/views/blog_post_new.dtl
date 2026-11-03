@@ -1,0 +1,9 @@
+{% extends "blog_layout.dtl" %}
+{% block title %}New post{% endblock %}
+{% block content %}
+<h1>New post</h1>
+<form method="post" action="/posts">
+  {% include "partials/post_form.dtl" %}
+  <button type="submit">Create post</button>
+</form>
+{% endblock %}

@@ -102,16 +102,15 @@ api_show_includes_author_and_comments(Config) ->
     false = maps:is_key(~"hashed_password", Author).
 
 api_create_comment(Config) ->
-    #{id := BobId} = ?config(bob, Config),
+    #{id := BobId} = Bob = ?config(bob, Config),
+    Token = blog_data_fixtures:token(Bob),
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Hello"}),
     Path = "/api/posts/" ++ integer_to_list(Id) ++ "/comments",
     {201, #{~"body" := ~"Nice one", ~"user_id" := BobId}} =
-        blog_data_fixtures:request(post, Path, #{body => ~"Nice one", user_id => BobId}),
+        blog_data_fixtures:request_as(Token, post, Path, #{body => ~"Nice one"}),
     {422, #{~"errors" := #{~"body" := [~"can't be blank"]}}} =
-        blog_data_fixtures:request(post, Path, #{body => ~"", user_id => BobId}),
-    {404, _} = blog_data_fixtures:request(post, "/api/posts/0/comments", #{
-        body => ~"x", user_id => BobId
-    }).
+        blog_data_fixtures:request_as(Token, post, Path, #{body => ~""}),
+    {404, _} = blog_data_fixtures:request_as(Token, post, "/api/posts/0/comments", #{body => ~"x"}).
 
 post_with_comments(Config) ->
     Alice = ?config(alice, Config),

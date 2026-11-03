@@ -107,12 +107,15 @@ embed_validation_errors_reach_the_parent(_Config) ->
     #{metadata := [~"expected a map"]} = blog_api_json:errors(Bad).
 
 api_tags_and_metadata(Config) ->
-    #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{
+    Alice = ?config(alice, Config),
+    #{id := Id} = blog_data_fixtures:post(Alice, #{
         ~"title" => ~"Tag me", ~"metadata" => #{~"seo_title" => ~"Tag me please"}
     }),
     Path = "/api/posts/" ++ integer_to_list(Id),
     {200, #{~"tags" := [~"erlang", ~"nova"]}} =
-        blog_data_fixtures:request(put, Path ++ "/tags", #{tags => [~"nova", ~"erlang"]}),
+        blog_data_fixtures:request_as(
+            blog_data_fixtures:token(Alice), put, Path ++ "/tags", #{tags => [~"nova", ~"erlang"]}
+        ),
     {200, #{
         ~"tags" := [~"erlang", ~"nova"],
         ~"metadata" := #{~"seo_title" := ~"Tag me please", ~"reading_minutes" := null}

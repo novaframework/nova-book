@@ -1,0 +1,19 @@
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+<div class="field">
+  <label for="title">Title</label>
+  <input id="title" name="title" value="{{ form.title }}" required>
+  {% include "partials/errors.dtl" with messages=errors.title %}
+</div>
+<div class="field">
+  <label for="body">Body</label>
+  <textarea id="body" name="body" rows="12" required>{{ form.body }}</textarea>
+  {% include "partials/errors.dtl" with messages=errors.body %}
+</div>
+<div class="field">
+  <label for="status">Status</label>
+  <select id="status" name="status">
+    <option value="draft"{% if form.status == "draft" %} selected{% endif %}>Draft</option>
+    <option value="published"{% if form.status == "published" %} selected{% endif %}>Published</option>
+  </select>
+  {% include "partials/errors.dtl" with messages=errors.status %}
+</div>

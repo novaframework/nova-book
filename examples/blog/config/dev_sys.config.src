@@ -18,7 +18,10 @@
  {nova, [
      {use_stacktrace, true},
      {environment, dev},
-     {cowboy_configuration, #{port => 8080}},
+     {cowboy_configuration, #{
+         port => 8080,
+         stream_handlers => [nova_stream_h, blog_session_h, cowboy_compress_h, cowboy_stream_h]
+     }},
      {dev_mode, true},
      {bootstrap_application, blog},
      {plugins, [

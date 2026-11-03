@@ -1,0 +1,1 @@
+{% if messages %}{% for message in messages %}<span class="error">{{ message }}</span>{% endfor %}{% endif %}
