@@ -4,7 +4,8 @@
      {logger_level, info},
      {logger, [
          {handler, default, logger_std_h, #{
-             formatter => {nova_jsonlogger, #{new_line => true}}
+             formatter => {nova_jsonlogger, #{new_line => true}},
+             filters => [{progress, {fun logger_filters:progress/2, stop}}]
          }}
      ]}
  ]},

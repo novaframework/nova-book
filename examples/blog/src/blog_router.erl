@@ -13,7 +13,8 @@ routes(_Environment) ->
             security => false,
             routes => [
                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
-                {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
+                {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}},
+                {"/health", fun blog_health_controller:ready/1, #{methods => [get]}}
             ]
         },
         #{
