@@ -1,0 +1,4 @@
+<p>Hi {{ username }},</p>
+<p>Someone asked to reset the password of your Nova Blog account.</p>
+<p><a href="{{ url }}">Choose a new password</a></p>
+<p>The link works once and expires in {{ hours }} hour{{ hours|pluralize }}. If you did not ask for a reset, ignore this email; your password has not changed.</p>

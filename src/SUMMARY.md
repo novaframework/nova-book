@@ -59,13 +59,19 @@
 - [Sending Email](email/sending-email.md)
 - [Transactional Email](email/transactional-email.md)
 
-# Part IX — Testing
+# Part IX - Background Jobs with Shigoto
+
+- [Background Jobs](jobs/background-jobs.md)
+- [Scheduling](jobs/scheduling.md)
+- [Operations](jobs/operations.md)
+
+# Part X - Testing
 
 - [Unit Testing](testing/unit-testing.md)
 - [Integration Testing](testing/integration-testing.md)
 - [Testing Real-Time](testing/testing-realtime.md)
 
-# Part X — Production
+# Part XI - Production
 
 - [Configuration](production/configuration.md)
 - [Observability](production/opentelemetry.md)

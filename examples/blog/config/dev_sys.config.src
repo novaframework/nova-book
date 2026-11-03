@@ -14,7 +14,16 @@
          }}
      ]}
  ]},
- {blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}]},
+ {blog, [
+     {json_lib, blog_json},
+     {ops_token, ~"dev-ops-token"},
+     {mailer, #{adapter => hikyaku_adapter_logger, level => notice}},
+     {mail_from, {~"Nova Blog", ~"noreply@blog.test"}}
+ ]},
+ {shigoto, [
+     {repo, blog_repo},
+     {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+ ]},
  {nova, [
      {use_stacktrace, true},
      {environment, dev},

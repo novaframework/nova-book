@@ -138,7 +138,13 @@ import_or_throw(Author, Params) ->
 add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
     CS = blog_comment:changeset(#{}, Params),
     CS1 = kura_changeset:put_change(CS, post_id, PostId),
-    blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)).
+    case blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)) of
+        {ok, Comment} ->
+            ok = blog_jobs:comment_added(Comment),
+            {ok, Comment};
+        {error, _} = Error ->
+            Error
+    end.
 
 import_post(#{id := AuthorId}, Params) ->
     CS = blog_post:changeset(#{}, Params),

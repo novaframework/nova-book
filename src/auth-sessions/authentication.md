@@ -629,7 +629,7 @@ x-ratelimit-remaining: 0
 }),
 ```
 
-`confirm_user/2` sets `confirmed_at`; `reset_password/3` runs the schema's `password_changeset/2` and deletes all the user's tokens, logging them out everywhere. Both tokens work once. They are meant to be emailed as links, which is where Part VIII's [Transactional Email](../email/transactional-email.md) picks them up; the blog has no pages for them. `blog_auth_accounts_SUITE` checks both.
+`confirm_user/2` sets `confirmed_at`; `reset_password/3` runs the schema's `password_changeset/2` and deletes all the user's tokens, logging them out everywhere. Both tokens work once. They are meant to be emailed as links. Part VIII's [Transactional Email](../email/transactional-email.md#confirming-addresses-and-resetting-passwords) sends them from a background job, adds the pages that redeem them, and makes `register/1` above send the confirmation. `blog_auth_accounts_SUITE` checks both.
 
 ```admonish info title="Single sign-on with nova_auth_oidc"
 To log in with Google, GitHub or any OpenID Connect provider, add [nova_auth_oidc](https://hex.pm/packages/nova_auth_oidc) 0.2.1. Its controller handles the redirect and the callback and stores an actor in the session with the same `nova_auth_actor` the blog uses, so `id`, `provider` and the Arizona live views carry over. Two differences from the password flow. There is no database token, so security functions must accept the actor alone. And in 0.2.1 the callback does not renew the session, so a planted session ID survives the login: call the callback from your own controller, then move the actor into a renewed session as `blog_session:log_in/2` does. The project's [README](https://github.com/novaframework/nova_auth_oidc) has the setup.
