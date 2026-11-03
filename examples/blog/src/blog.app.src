@@ -11,6 +11,7 @@
         nova,
         kura,
         kura_postgres,
+        nova_auth,
         arizona_nova
     ]},
     {env, []},
