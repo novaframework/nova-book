@@ -34,7 +34,7 @@ greeting(Name, _Query) ->
     <<"Hello, ", Name/binary, "!">>.
 
 validate_name(Name) when is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 32 ->
-    case re:run(Name, ~"^[A-Za-z0-9_-]+$") of
+    case re:run(Name, ~"^[A-Za-z0-9_-]+\\z") of
         {match, _} -> ok;
         nomatch -> {error, invalid_name}
     end;

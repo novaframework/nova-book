@@ -32,4 +32,4 @@ changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [name]),
     CS1 = kura_changeset:validate_required(CS, [name]),
     CS2 = kura_changeset:validate_length(CS1, name, [{max, 30}]),
-    kura_changeset:validate_format(CS2, name, ~"^[a-z0-9-]+$").
+    kura_changeset:validate_format(CS2, name, ~"^[a-z0-9-]+\\z").

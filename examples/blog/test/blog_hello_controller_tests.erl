@@ -13,6 +13,10 @@ greet_rejects_bad_names_test() ->
     Req = greet_req(~"<script>", #{}),
     ?assertEqual({error, invalid_name}, blog_hello_controller:greet(Req)).
 
+greet_rejects_a_trailing_newline_test() ->
+    Req = greet_req(~"Ada\n", #{}),
+    ?assertEqual({error, invalid_name}, blog_hello_controller:greet(Req)).
+
 create_from_json_test() ->
     Req = nova_test_req:with_json(#{~"name" => ~"Ada"}, nova_test_req:new(post, "/hello")),
     ?assertJsonResponse(201, #{name := ~"Ada"}, blog_hello_controller:create(Req)),

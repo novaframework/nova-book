@@ -135,7 +135,7 @@ handle_event(~"remove_tag", #{~"tag" := Tag}, Bindings) ->
 
 normalize(Input) ->
     Tag = string:lowercase(string:trim(Input)),
-    case re:run(Tag, ~"^[a-z0-9-]{1,24}$") of
+    case re:run(Tag, ~"^[a-z0-9-]{1,24}\\z") of
         {match, _} -> {ok, Tag};
         nomatch -> {error, ~"Tags are 1-24 characters: a-z, 0-9 and -"}
     end.
