@@ -116,7 +116,7 @@ frame(Event, Payload) ->
     {text, json:encode(#{~"event" => Event, ~"data" => Payload})}.
 ```
 
-`join` happens in `websocket_init/1`, which runs in the connection process after the upgrade. The handler then sends the recent events, so a reader who just arrived sees what happened a minute ago, not an empty list. A list of frames is fine as a reply; Nova sends them in order.
+`join` happens in `websocket_init/1`, which runs in the connection process after the upgrade. The handler then sends the recent events, so a reader who just arrived sees what happened a minute ago, not an empty list. A list of frames is fine as a reply; Nova sends them in order. An event published in the moment between `join` and `recent()` is delivered twice, once live and once in the backlog, so the feed is at-least-once. For the blog a repeated line in the header is harmless; a client that cares can skip an event it has already shown.
 
 Joining before reading the backlog means an event published in between can arrive twice (once in the backlog, once live) but never not at all. For a feed that is the right side to err on.
 

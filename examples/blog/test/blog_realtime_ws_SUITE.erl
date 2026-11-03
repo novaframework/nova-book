@@ -129,7 +129,7 @@ notifications_are_pushed_to_clients(_Config) ->
         recv_event(Client, ~"post_published")
     ),
     ok = blog_ws_client:send_text(Client, ~"ping"),
-    ?assertEqual({text, ~"pong"}, blog_ws_client:recv(Client)),
+    ok = recv_pong(Client),
     blog_ws_client:close(Client).
 
 notifications_replay_recent_on_connect(_Config) ->
@@ -198,6 +198,13 @@ relay_loop(TestPid) ->
 origin() ->
     {ok, #{port := Port}} = application:get_env(nova, cowboy_configuration),
     {~"origin", <<"http://localhost:", (integer_to_binary(Port))/binary>>}.
+
+recv_pong(Client) ->
+    case blog_ws_client:recv(Client) of
+        {text, ~"pong"} -> ok;
+        {text, _Event} -> recv_pong(Client);
+        Other -> ct:fail({unexpected, Other})
+    end.
 
 recv_event(Client, Event) ->
     case blog_ws_client:recv_json(Client) of
