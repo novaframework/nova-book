@@ -70,6 +70,14 @@ routes(_Environment) ->
             ]
         },
         #{
+            prefix => "/ws",
+            security => fun blog_ws_security:same_origin/1,
+            routes => [
+                {"/echo", blog_echo_ws, #{protocol => ws}},
+                {"/notifications", blog_notifications_ws, #{protocol => ws}}
+            ]
+        },
+        #{
             prefix => "",
             security => false,
             routes => [
