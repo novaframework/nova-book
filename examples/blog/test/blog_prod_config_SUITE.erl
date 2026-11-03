@@ -2,7 +2,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--export([all/0]).
+-export([all/0, replacement/2]).
 -export([
     every_config_parses/1,
     every_config_declares_the_repo/1,
@@ -106,7 +106,7 @@ consult(File) ->
     parse(substitute(Text)).
 
 substitute(Text) ->
-    re:replace(Text, ~"\\$\\{([A-Z_]+)(:-)?([^}]*)\\}", fun replacement/2, [
+    re:replace(Text, ~"\\$\\{([A-Z_]+)(:-)?([^}]*)\\}", fun ?MODULE:replacement/2, [
         global, {return, binary}
     ]).
 

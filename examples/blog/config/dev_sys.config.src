@@ -37,7 +37,6 @@
              nova_plugin_handler
          ]
      }},
-     {dev_mode, true},
      {bootstrap_application, blog},
      {plugins, [
          {pre_request, blog_request_logger, #{}},
