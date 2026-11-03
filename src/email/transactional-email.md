@@ -330,11 +330,7 @@ The link works once and expires in {{ hours }} hour{{ hours|pluralize }}. If you
 
 ```erlang
 register(Params) ->
-    case
-        nova_auth_accounts:register(
-            blog_auth, fun blog_user:registration_changeset/2, normalize_email(Params)
-        )
-    of
+    case nova_auth_accounts:register(blog_auth, fun blog_user:registration_changeset/2, Params) of
         {ok, User} ->
             ok = blog_jobs:account_email(confirm, User),
             {ok, User};
@@ -352,8 +348,12 @@ confirm(_Token) ->
     {error, not_found}.
 
 request_password_reset(Email) when is_binary(Email) ->
-    case blog_repo:get_by(blog_user, [{email, string:casefold(string:trim(Email))}]) of
-        {ok, User} -> blog_jobs:account_email(reset, User);
+    maybe
+        {ok, Normalized} ?= blog_user:normalize_email(Email),
+        {ok, User} ?= blog_repo:get_by(blog_user, [{email, Normalized}]),
+        blog_jobs:account_email(reset, User)
+    else
+        {error, invalid_encoding} -> ok;
         {error, not_found} -> ok
     end;
 request_password_reset(_Email) ->
@@ -365,7 +365,7 @@ reset_password(_Token, _Params) ->
     {error, not_found}.
 ```
 
-`request_password_reset/1` returns `ok` whether or not the address has an account, so its caller cannot leak the difference. The address is normalised the same way as at registration and login.
+`request_password_reset/1` returns `ok` whether or not the address has an account, so its caller cannot leak the difference. The address goes through `blog_user:normalize_email/1`, the same function registration and login use, so `Alice@Example.com` finds Alice's account. The `maybe` block runs its steps in order and jumps to `else` at the first one that does not match: an address that is not valid UTF-8 and an address with no account both end in `ok`.
 
 ### The pages
 

@@ -8,7 +8,8 @@
     profile_changeset/2,
     password_changeset/2,
     email_changeset/2,
-    role_changeset/2
+    role_changeset/2,
+    normalize_email/1
 ]).
 
 table() -> ~"users".
@@ -50,7 +51,7 @@ registration_changeset(Data, Params) ->
     CS2 = validate_email(CS1),
     CS3 = validate_username(CS2),
     CS4 = validate_password(CS3),
-    hash_password(CS4).
+    scrub_password(hash_password(CS4)).
 
 profile_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [username, full_name]),
@@ -60,12 +61,12 @@ profile_changeset(Data, Params) ->
 password_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [password, password_confirmation]),
     CS1 = kura_changeset:validate_required(CS, [password]),
-    hash_password(validate_password(CS1)).
+    scrub_password(hash_password(validate_password(CS1))).
 
 email_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [email]),
     CS1 = kura_changeset:validate_required(CS, [email]),
-    validate_email(CS1).
+    reset_confirmation(validate_email(CS1)).
 
 role_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [role]),
@@ -82,17 +83,60 @@ before_delete(#{role := admin, id := Id}) ->
 before_delete(_User) ->
     ok.
 
+normalize_email(Email) ->
+    case unicode:characters_to_nfc_binary(Email) of
+        Normalized when is_binary(Normalized) ->
+            {ok, string:casefold(string:trim(Normalized))};
+        _ ->
+            {error, invalid_encoding}
+    end.
+
 validate_email(CS) ->
-    CS1 = kura_changeset:validate_format(CS, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"),
-    kura_changeset:validate_length(CS1, email, [{max, 160}]).
+    CS1 = put_normalized_email(CS, kura_changeset:get_change(CS, email)),
+    CS2 = kura_changeset:validate_format(CS1, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+\\z"),
+    kura_changeset:validate_length(CS2, email, [{max, 160}]).
+
+put_normalized_email(CS, undefined) ->
+    CS;
+put_normalized_email(CS, Email) ->
+    case normalize_email(Email) of
+        {ok, Normalized} -> put_email(CS, Normalized);
+        {error, invalid_encoding} -> kura_changeset:add_error(CS, email, ~"is not valid UTF-8")
+    end.
+
+put_email(#kura_changeset{data = #{email := Email}, changes = Changes} = CS, Email) ->
+    CS#kura_changeset{changes = maps:remove(email, Changes)};
+put_email(CS, Email) ->
+    kura_changeset:put_change(CS, email, Email).
+
+reset_confirmation(CS) ->
+    case kura_changeset:get_change(CS, email) of
+        undefined -> CS;
+        _NewEmail -> kura_changeset:put_change(CS, confirmed_at, undefined)
+    end.
 
 validate_username(CS) ->
     CS1 = kura_changeset:validate_length(CS, username, [{min, 2}, {max, 30}]),
-    kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+$").
+    kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+\\z").
 
 validate_password(CS) ->
-    CS1 = kura_changeset:validate_length(CS, password, [{min, 12}, {max, 72}]),
+    CS1 = validate_password_length(CS, kura_changeset:get_change(CS, password)),
     kura_changeset:validate_confirmation(CS1, password).
+
+validate_password_length(CS, undefined) ->
+    CS;
+validate_password_length(CS, Password) ->
+    case unicode:characters_to_binary(Password) of
+        Password -> check_password_length(CS, string:length(Password));
+        _ -> kura_changeset:add_error(CS, password, ~"is not valid UTF-8")
+    end.
+
+check_password_length(CS, Length) when Length < 12 ->
+    kura_changeset:add_error(CS, password, ~"should be at least 12 character(s)");
+check_password_length(CS, Length) when Length > 1024 ->
+    kura_changeset:add_error(CS, password, ~"should be at most 1024 character(s)");
+check_password_length(CS, _Length) ->
+    CS.
 
 hash_password(#kura_changeset{valid = true} = CS) ->
     case kura_changeset:get_change(CS, password) of
@@ -103,3 +147,10 @@ hash_password(#kura_changeset{valid = true} = CS) ->
     end;
 hash_password(CS) ->
     CS.
+
+scrub_password(#kura_changeset{changes = Changes, params = Params} = CS) ->
+    Secrets = [password, password_confirmation],
+    CS#kura_changeset{
+        changes = maps:without(Secrets, Changes),
+        params = maps:without(Secrets, Params)
+    }.

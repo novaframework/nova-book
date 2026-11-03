@@ -13,6 +13,9 @@
     registration_validates_fields/1,
     registration_needs_matching_confirmation/1,
     unique_email_becomes_changeset_error/1,
+    email_is_unique_after_normalisation/1,
+    trailing_newline_is_trimmed/1,
+    email_change_clears_confirmed_at/1,
     errors_render_as_json_map/1,
     schemaless_changeset_validates_query_params/1
 ]).
@@ -28,6 +31,9 @@ all() ->
         registration_validates_fields,
         registration_needs_matching_confirmation,
         unique_email_becomes_changeset_error,
+        email_is_unique_after_normalisation,
+        trailing_newline_is_trimmed,
+        email_change_clears_confirmed_at,
         errors_render_as_json_map,
         schemaless_changeset_validates_query_params
     ].
@@ -113,7 +119,34 @@ unique_email_becomes_changeset_error(_Config) ->
     {error, CS} = blog_repo:insert(
         blog_user:registration_changeset(#{}, registration(#{~"username" => ~"alice2"}))
     ),
+    [{email, ~"has already been taken"}] = CS#kura_changeset.errors,
+    Secrets = [password, password_confirmation],
+    0 = map_size(maps:with(Secrets, CS#kura_changeset.changes)),
+    0 = map_size(maps:with(Secrets, CS#kura_changeset.params)).
+
+email_is_unique_after_normalisation(_Config) ->
+    {ok, #{email := ~"victim@b.com"}} = insert_user(~"Victim@B.com", ~"victim"),
+    {error, CS} = insert_user(~"victim@b.com", ~"mallory"),
     [{email, ~"has already been taken"}] = CS#kura_changeset.errors.
+
+trailing_newline_is_trimmed(_Config) ->
+    {ok, #{email := ~"victim@b.com"}} = insert_user(~"victim@b.com\n", ~"victim"),
+    {error, CS} = insert_user(~"victim@b.com", ~"mallory"),
+    [{email, ~"has already been taken"}] = CS#kura_changeset.errors.
+
+email_change_clears_confirmed_at(_Config) ->
+    ConfirmedAt = {{2026, 11, 1}, {9, 0, 0}},
+    User = blog_data_fixtures:user(~"carol"),
+    {ok, Confirmed} = blog_repo:update(
+        kura_changeset:cast(blog_user, User, #{confirmed_at => ConfirmedAt}, [confirmed_at])
+    ),
+    {ok, #{confirmed_at := ConfirmedAt}} =
+        blog_repo:update(blog_user:email_changeset(Confirmed, #{~"email" => ~"CAROL@example.com"})),
+    {ok, #{email := ~"carol@elsewhere.example", confirmed_at := undefined}} =
+        blog_repo:update(
+            blog_user:email_changeset(Confirmed, #{~"email" => ~"carol@elsewhere.example"})
+        ),
+    {ok, #{confirmed_at := undefined}} = blog_repo:get(blog_user, maps:get(id, User)).
 
 errors_render_as_json_map(_Config) ->
     CS = blog_post:changeset(#{}, #{~"title" => ~"Hi"}),
@@ -125,6 +158,13 @@ schemaless_changeset_validates_query_params(_Config) ->
     {error, CS} = blog_posts:list_posts(#{~"page" => ~"0", ~"page_size" => ~"abc"}),
     #{page := [~"must be greater than 0"], page_size := [_]} = blog_api_json:errors(CS),
     {ok, #{page := 1, page_size := 10}} = blog_posts:list_posts(#{}).
+
+insert_user(Email, Username) ->
+    blog_repo:insert(
+        blog_user:registration_changeset(
+            #{}, registration(#{~"email" => Email, ~"username" => Username})
+        )
+    ).
 
 registration(Overrides) ->
     maps:merge(

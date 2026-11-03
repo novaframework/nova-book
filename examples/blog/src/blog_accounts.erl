@@ -13,11 +13,7 @@
 ]).
 
 register(Params) ->
-    case
-        nova_auth_accounts:register(
-            blog_auth, fun blog_user:registration_changeset/2, normalize_email(Params)
-        )
-    of
+    case nova_auth_accounts:register(blog_auth, fun blog_user:registration_changeset/2, Params) of
         {ok, User} ->
             ok = blog_jobs:account_email(confirm, User),
             {ok, User};
@@ -31,8 +27,12 @@ confirm(_Token) ->
     {error, not_found}.
 
 request_password_reset(Email) when is_binary(Email) ->
-    case blog_repo:get_by(blog_user, [{email, string:casefold(string:trim(Email))}]) of
-        {ok, User} -> blog_jobs:account_email(reset, User);
+    maybe
+        {ok, Normalized} ?= blog_user:normalize_email(Email),
+        {ok, User} ?= blog_repo:get_by(blog_user, [{email, Normalized}]),
+        blog_jobs:account_email(reset, User)
+    else
+        {error, invalid_encoding} -> ok;
         {error, not_found} -> ok
     end;
 request_password_reset(_Email) ->
@@ -44,7 +44,10 @@ reset_password(_Token, _Params) ->
     {error, not_found}.
 
 authenticate(Email, Password) when is_binary(Email), is_binary(Password) ->
-    nova_auth_accounts:authenticate(blog_auth, string:casefold(string:trim(Email)), Password);
+    case blog_user:normalize_email(Email) of
+        {ok, Normalized} -> nova_auth_accounts:authenticate(blog_auth, Normalized, Password);
+        {error, invalid_encoding} -> {error, invalid_credentials}
+    end;
 authenticate(_Email, _Password) ->
     {error, invalid_credentials}.
 
@@ -61,8 +64,3 @@ revoke_token(Token) ->
 
 actor(#{id := Id, username := Username, role := Role}) ->
     #{id => Id, provider => password, username => Username, role => Role}.
-
-normalize_email(#{~"email" := Email} = Params) when is_binary(Email) ->
-    Params#{~"email" := string:casefold(string:trim(Email))};
-normalize_email(Params) ->
-    Params.
