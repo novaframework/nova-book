@@ -212,7 +212,7 @@ missing_encryption_key_stops_the_boot(_Config) ->
 `examples/blog/Dockerfile` builds the release in one image and runs it in another:
 
 ```dockerfile
-FROM erlang:29.0.2-slim AS build
+FROM erlang:29.1.2-slim AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -253,17 +253,16 @@ docker-compose.yml
 
 Every line is there for a reason:
 
-- **OTP 29.** Arizona requires OTP 29, so the builder is `erlang:29.0.2-slim`.
+- **OTP 29.** Arizona requires OTP 29, so the builder is `erlang:29.1.2-slim`, the same OTP release `.tool-versions` pins for local work.
 - **git in the builder.** `rebar3_nova` and `rebar3_erlydtl_plugin` are project plugins fetched from git, and the slim image has no git.
 - **Dependencies first.** Copying `rebar.config` and `rebar.lock` alone and compiling the dependencies gives Docker a cached layer that survives changes to `src/`.
-- **Same Debian on both sides.** `erlang:29.0.2-slim` is Debian trixie; so is the runtime. ERTS from the builder is linked against trixie's glibc 2.41 and OpenSSL 3. On `debian:bookworm-slim` (glibc 2.36) the VM does not even start: `beam.smp: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found`. `ldd` on `beam.smp` and on `crypto.so` lists what the runtime needs: `libtinfo6`, `libstdc++6` and `libssl3t64`, all present in `trixie-slim` today and named here so a base image change cannot silently drop them. `libsctp1` only silences a `Failed open sctp dynamic library` warning at every boot.
-- **ca-certificates.** `debian:trixie-slim` has no CA bundle. Without it every outgoing TLS connection that verifies the peer (the OTLP exporter, an email API, Postgres over TLS) fails, and in OTP 29.0.2 `public_key:cacerts_get/0` does not even return an error:
+- **Same Debian on both sides.** `erlang:29.1.2-slim` is Debian trixie; so is the runtime. ERTS from the builder is linked against trixie's glibc 2.41 and OpenSSL 3. On `debian:bookworm-slim` (glibc 2.36) the VM does not even start: `beam.smp: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found`. `ldd` on `beam.smp` and on `crypto.so` lists what the runtime needs: `libtinfo6`, `libstdc++6` and `libssl3t64`, all present in `trixie-slim` today and named here so a base image change cannot silently drop them. `libsctp1` only silences a `Failed open sctp dynamic library` warning at every boot.
+- **ca-certificates.** `debian:trixie-slim` has no CA bundle. Without it every outgoing TLS connection that verifies the peer (the OTLP exporter, an email API, Postgres over TLS) fails, and `public_key:cacerts_get/0` raises instead of returning a list:
 
   ```
   {'EXIT',
-      {function_clause,
-          [{pubkey_os_cacerts,conv_error_reason,
-               [no_cacerts_found],
+      {{failed_load_cacerts,no_cacerts_found},
+       [{pubkey_os_cacerts,get,0,
   ...
   ```
 
@@ -279,16 +278,16 @@ docker build --pull --provenance=false -t nova-book-blog:prod .
 ```
 ...
 #17 [build 9/9] RUN rebar3 as prod tar     && mkdir /release     && tar -xzf _build/prod/rel/blog/blog-*.tar.gz -C /release
-#17 0.826 ===> Verifying dependencies...
+#17 0.785 ===> Verifying dependencies...
 ...
-#17 1.895 ===> Getting log of git repo failed in /build. Falling back to version 0.0.0
-#17 1.970 ===> Assembling release blog-0.0.0...
-#17 3.050 ===> Release successfully assembled: _build/prod/rel/blog
+#17 2.083 ===> Getting log of git repo failed in /build. Falling back to version 0.0.0
+#17 2.159 ===> Assembling release blog-0.0.0...
+#17 3.106 ===> Release successfully assembled: _build/prod/rel/blog
 ...
 #19 naming to docker.io/library/nova-book-blog:prod done
 ```
 
-The image is 249 MB, against 455 MB for the builder. The "git repo failed" line is the version fallback from above; pass the version in from your CI if you need it in the image.
+The image is 238 MB, against 456 MB for the builder. The "git repo failed" line is the version fallback from above; pass the version in from your CI if you need it in the image.
 
 Run it with an env file (the same variables as before, with `DB_HOST` pointing at the database as seen from the container):
 
@@ -299,7 +298,7 @@ docker logs blog
 ```
 
 ```
-Exec: /app/erts-17.0.2/bin/erlexec -noinput +Bd -boot /app/releases/0.0.0/start -mode embedded -boot_var SYSTEM_LIB_DIR /app/lib -config /tmp/sys.config -args_file /tmp/vm.args -- foreground
+Exec: /app/erts-17.1.1/bin/erlexec -noinput +Bd -boot /app/releases/0.0.0/start -mode embedded -boot_var SYSTEM_LIB_DIR /app/lib -config /tmp/sys.config -args_file /tmp/vm.args -- foreground
 Root: /app
 /app
 {..."msg":"Starting nova","level":"notice","mfa":"nova_sup:init/1","environment":"prod"}
