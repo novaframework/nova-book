@@ -8,6 +8,11 @@
     create_post/2,
     update_post/2,
     delete_post/1,
+    restore_post/1,
+    purge_deleted/1,
+    archive_stale_drafts/1,
+    publish/2,
+    import_posts/2,
     add_comment/3,
     import_post/2,
     tag_post/2,
@@ -77,10 +82,58 @@ create_post(#{id := AuthorId}, Params) ->
     blog_repo:insert(kura_changeset:put_change(CS, user_id, AuthorId)).
 
 update_post(Post, Params) ->
-    blog_repo:update(blog_post:changeset(Post, Params)).
+    Expected = expected_version(Post, Params),
+    CS = blog_post:changeset(Post#{lock_version => Expected}, Params),
+    blog_repo:update(kura_changeset:optimistic_lock(CS, lock_version)).
+
+expected_version(#{lock_version := Current}, Params) ->
+    case kura_types:cast(integer, maps:get(~"lock_version", Params, Current)) of
+        {ok, Version} when is_integer(Version) -> Version;
+        _ -> Current
+    end.
 
 delete_post(Post) ->
-    blog_repo:delete(kura_changeset:cast(blog_post, Post, #{}, [])).
+    blog_repo:soft_delete(kura_changeset:cast(blog_post, Post, #{}, [])).
+
+restore_post(Id) ->
+    Query = kura_query:only_deleted(kura_query:where(kura_query:from(blog_post), {id, Id})),
+    case blog_repo:one(Query) of
+        {ok, Post} -> blog_repo:restore(kura_changeset:cast(blog_post, Post, #{}, []));
+        {error, not_found} -> {error, not_found}
+    end.
+
+purge_deleted(Before) ->
+    Query = kura_query:only_deleted(kura_query:from(blog_post)),
+    blog_repo:delete_all(kura_query:where(Query, {deleted_at, '<', Before})).
+
+archive_stale_drafts(Before) ->
+    Query = kura_query:where(kura_query:from(blog_post), {status, ~"draft"}),
+    Stale = kura_query:where(Query, {updated_at, '<', Before}),
+    blog_repo:update_all(Stale, #{status => archived, updated_at => calendar:universal_time()}).
+
+publish(Post, TagNames) ->
+    Multi = kura_multi:new(),
+    Multi1 = kura_multi:update(Multi, post, blog_post:changeset(Post, #{status => published})),
+    Multi2 = kura_multi:run(Multi1, tagged, fun(#{post := Published}) ->
+        tag_post(Published, TagNames)
+    end),
+    case blog_repo:multi(Multi2) of
+        {ok, #{tagged := Tagged}} -> {ok, Tagged};
+        {error, Step, Reason, _Completed} -> {error, {Step, Reason}}
+    end.
+
+import_posts(Author, PostsParams) ->
+    try blog_repo:transaction(fun() -> [import_or_throw(Author, P) || P <- PostsParams] end) of
+        Imported -> {ok, Imported}
+    catch
+        throw:{import_failed, CS} -> {error, CS}
+    end.
+
+import_or_throw(Author, Params) ->
+    case import_post(Author, Params) of
+        {ok, Post} -> Post;
+        {error, CS} -> throw({import_failed, CS})
+    end.
 
 add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
     CS = blog_comment:changeset(#{}, Params),

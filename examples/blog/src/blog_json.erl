@@ -12,6 +12,7 @@ post(Post) ->
         user_id => maps:get(user_id, Post),
         published_at => datetime(maps:get(published_at, Post)),
         metadata => metadata(maps:get(metadata, Post)),
+        lock_version => maps:get(lock_version, Post),
         inserted_at => datetime(maps:get(inserted_at, Post))
     }).
 

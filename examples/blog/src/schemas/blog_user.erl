@@ -2,7 +2,7 @@
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, indexes/0, associations/0]).
+-export([table/0, fields/0, indexes/0, associations/0, before_delete/1]).
 -export([
     registration_changeset/2,
     profile_changeset/2,
@@ -22,6 +22,7 @@ fields() ->
         #kura_field{
             name = role, type = {enum, [author, admin]}, nullable = false, default = author
         },
+        #kura_field{name = full_name, type = {encrypted, string}},
         #kura_field{name = confirmed_at, type = utc_datetime},
         #kura_field{name = inserted_at, type = utc_datetime},
         #kura_field{name = updated_at, type = utc_datetime},
@@ -43,7 +44,7 @@ associations() ->
 
 registration_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [
-        email, username, password, password_confirmation
+        email, username, full_name, password, password_confirmation
     ]),
     CS1 = kura_changeset:validate_required(CS, [email, username, password]),
     CS2 = validate_email(CS1),
@@ -52,7 +53,7 @@ registration_changeset(Data, Params) ->
     hash_password(CS4).
 
 profile_changeset(Data, Params) ->
-    CS = kura_changeset:cast(?MODULE, Data, Params, [username]),
+    CS = kura_changeset:cast(?MODULE, Data, Params, [username, full_name]),
     CS1 = kura_changeset:validate_required(CS, [username]),
     validate_username(CS1).
 
@@ -69,6 +70,17 @@ email_changeset(Data, Params) ->
 role_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [role]),
     kura_changeset:validate_required(CS, [role]).
+
+before_delete(#{role := admin, id := Id}) ->
+    Others = kura_query:where(
+        kura_query:from(?MODULE), {'and', [{role, ~"admin"}, {id, '!=', Id}]}
+    ),
+    case blog_repo:exists(Others) of
+        {ok, true} -> ok;
+        {ok, false} -> {error, last_admin}
+    end;
+before_delete(_User) ->
+    ok.
 
 validate_email(CS) ->
     CS1 = kura_changeset:validate_format(CS, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"),

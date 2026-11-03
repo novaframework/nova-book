@@ -49,6 +49,7 @@ update(#{bindings := #{~"id" := Id}, json := Params}) ->
         {ok, Post} ->
             case blog_posts:update_post(Post, Params) of
                 {ok, Updated} -> {json, blog_json:post(Updated)};
+                {error, stale} -> {json, 409, #{}, #{error => ~"post was changed by someone else"}};
                 {error, #kura_changeset{} = CS} -> unprocessable(CS)
             end;
         {error, not_found} ->

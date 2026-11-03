@@ -36,6 +36,11 @@
              password => "postgres",
              pool_size => 10
          }
+     }},
+     %% Development-only key. Generate your own: base64 of 32 random bytes.
+     {encryption, #{
+         active => 1,
+         keys => [{1, <<"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q=">>}]
      }}
  ]}
 ].

@@ -3,6 +3,7 @@
 -include_lib("kura/include/kura.hrl").
 
 -export([table/0, fields/0, indexes/0, associations/0, embeds/0]).
+-export([before_update/1, after_insert/1, after_update/1, after_delete/1]).
 -export([changeset/2]).
 
 table() -> ~"posts".
@@ -21,6 +22,8 @@ fields() ->
         #kura_field{name = user_id, type = bigint, nullable = false},
         #kura_field{name = published_at, type = utc_datetime},
         #kura_field{name = metadata, type = jsonb},
+        #kura_field{name = lock_version, type = integer, nullable = false, default = 1},
+        #kura_field{name = deleted_at, type = utc_datetime},
         #kura_field{name = inserted_at, type = utc_datetime},
         #kura_field{name = updated_at, type = utc_datetime}
     ].
@@ -68,3 +71,18 @@ stamp_published_at(CS) ->
         _ ->
             CS
     end.
+
+before_update(CS) ->
+    kura_audit:stash(CS),
+    {ok, CS}.
+
+after_insert(Post) ->
+    kura_audit:log(blog_repo, ?MODULE, insert, Post),
+    {ok, Post}.
+
+after_update(Post) ->
+    kura_audit:log(blog_repo, ?MODULE, update, Post),
+    {ok, Post}.
+
+after_delete(Post) ->
+    kura_audit:log(blog_repo, ?MODULE, delete, Post).
