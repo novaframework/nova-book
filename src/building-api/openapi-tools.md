@@ -143,15 +143,18 @@ The generated `swagger.html` would give you an interactive page, but it loads it
 
 ### Routes
 
-`rebar3 nova routes` shows both API groups under the shared `/api` prefix (bindings are printed without the colon, so `/id` is `/:id`):
+`rebar3 nova routes` shows every API group under the shared `/api` prefix: the posts API, the token routes from [Authentication](../auth-sessions/authentication.md#api-tokens) and the tags API (bindings are printed without the colon, so `/id` is `/:id`). The output is trimmed to the `/api` subtree:
 
 ```
      ├─  /api
+         ├─  GET /openapi.json (blog, blog_api_docs_controller:openapi/1)
          ├─  POST /tags (blog, blog_tags_controller:create/1)
          ├─  GET /tags (blog, blog_tags_controller:list/1)
              └─  DELETE /id (blog, blog_tags_controller:delete/1)
              └─  PUT /id (blog, blog_tags_controller:update/1)
              └─  GET /id (blog, blog_tags_controller:show/1)
+         ├─  POST /tokens (blog, blog_tokens_controller:create/1)
+         ├─  DELETE /tokens (blog, blog_tokens_controller:delete/1)
          └─  POST /posts (blog, blog_posts_controller:create/1)
          └─  GET /posts (blog, blog_posts_controller:index/1)
              └─  DELETE /id (blog, blog_posts_controller:delete/1)
@@ -163,7 +166,7 @@ The generated `swagger.html` would give you an interactive page, but it loads it
 
 ### Plugin chains
 
-`rebar3 nova middleware` confirms which plugins each group runs, and in which order. The posts group inherits the global request plugin; the tags group has its own chain:
+`rebar3 nova middleware` confirms which plugins and which security function each group runs. The posts groups inherit the global request plugin, the token route has its own rate limiter, and the tags group has its own chain. The output is trimmed to the four `/api` groups:
 
 ```
   Group: prefix=/api  security=false
@@ -173,12 +176,30 @@ The generated `swagger.html` would give you an interactive page, but it loads it
                                        read_urlencoded_body => true}
   Routes:
     GET /posts -> blog_posts_controller:index
-    POST /posts -> blog_posts_controller:create
     GET /posts/:id -> blog_posts_controller:show
+
+  Group: prefix=/api  security=fun blog_security:require_bearer/1
+  Plugins:
+    (inherits global)
+    pre_request: nova_request_plugin #{decode_json_body => true,
+                                       read_urlencoded_body => true}
+  Routes:
+    POST /posts -> blog_posts_controller:create
     PUT /posts/:id -> blog_posts_controller:update
     DELETE /posts/:id -> blog_posts_controller:delete
     POST /posts/:id/comments -> blog_posts_controller:create_comment
     PUT /posts/:id/tags -> blog_posts_controller:update_tags
+    DELETE /tokens -> blog_tokens_controller:delete
+
+  Group: prefix=/api  security=false
+  Plugins:
+    pre_request: nova_request_plugin #{decode_json_body => true}
+    pre_request: blog_rate_limit #{limit => 5,algorithm => sliding_window,
+                                   key_fun => fun blog_rate_limit:client_ip/1,
+                                   limiter => blog_login_limiter,
+                                   window => 60000}
+  Routes:
+    POST /tokens -> blog_tokens_controller:create
 
   Group: prefix=/api  security=false
   Plugins:
@@ -191,22 +212,19 @@ The generated `swagger.html` would give you an interactive page, but it loads it
     POST /tags -> blog_tags_controller:create
     PUT /tags/:id -> blog_tags_controller:update
     DELETE /tags/:id -> blog_tags_controller:delete
+    GET /openapi.json -> blog_api_docs_controller:openapi
 ```
 
 The command still stops with an error when it reaches the last group, as described in [Plugins](../foundations/plugins.md); everything before it prints first.
 
 ### Security audit
 
-`rebar3 nova audit` lists every write route without a security function. The API lines:
+`rebar3 nova audit` lists every write route without a security function. The output is trimmed to the API lines:
 
 ```
   WARNINGS:
     ...
-    POST /api/posts/{id}/comments (blog_posts_controller) has no security
-    PUT /api/posts/{id}/tags (blog_posts_controller) has no security
-    PUT /api/posts/{id} (blog_posts_controller) has no security
-    DELETE /api/posts/{id} (blog_posts_controller) has no security
-    POST /api/posts (blog_posts_controller) has no security
+    POST /api/tokens (blog_tokens_controller) has no security
     PUT /api/tags/{id} (blog_tags_controller) has no security
     DELETE /api/tags/{id} (blog_tags_controller) has no security
     POST /api/tags (blog_tags_controller) has no security
@@ -217,11 +235,12 @@ The command still stops with an error when it reaches the last group, as describ
     GET /api/posts (blog_posts_controller) has no security
     GET /api/tags/{id} (blog_tags_controller) has no security
     GET /api/tags (blog_tags_controller) has no security
+    GET /api/openapi.json (blog_api_docs_controller) has no security
     ...
-  Summary: 19 warning(s), 13 info(s)
+  Summary: 17 warning(s), 14 info(s)
 ```
 
-Reading the blog's posts and tags is meant to be public, so the INFO lines are fine. The warnings are the to-do list for [Part III](../auth-sessions/authentication.md).
+`POST /api/tokens` is open on purpose: it is how a client gets a token, and it is rate-limited. Reading posts and tags is meant to be public. The post writes already need a bearer token (Part III); the tag writes are the gap that remains, closed in [Security](../production/security.md#tag-writes-need-an-admin).
 
 ### Doctor
 
