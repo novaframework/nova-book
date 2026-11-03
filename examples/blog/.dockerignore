@@ -1,0 +1,7 @@
+_build
+test
+log
+logs
+rebar3.crashdump
+erl_crash.dump
+docker-compose.yml

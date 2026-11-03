@@ -63,12 +63,13 @@ require_user(Req, Bindings) ->
     end.
 
 session_user(Req) ->
-    case nova_auth_actor:fetch(arizona_req:raw(Req)) of
-        {ok, User} -> User;
-        {error, not_found} -> undefined
+    case blog_security:session_actor(arizona_req:raw(Req)) of
+        {ok, Actor} -> Actor;
+        {error, _} -> undefined
     end.
 ```
 
+- `session_user/1` uses `blog_security:session_actor/1` from [Authentication](../auth-sessions/authentication.md#security-functions), the same check the HTML pages use: it looks the session's token up in the database, so a revoked or expired login is refused here too. (An earlier version read the actor that `nova_auth_actor` caches in the session; [Security](../production/security.md#live-views-verify-the-token) explains why that was not enough.)
 - `current_user/2` adds a `current_user` binding, `undefined` for anonymous readers.
 - `require_user/2` redirects anonymous visitors to `/login` and halts. On the WebSocket upgrade a halt refuses the connection.
 - `path_bindings/2` is explained below.
@@ -93,12 +94,17 @@ HTTP/1.1 302 Found
 location: /login
 ```
 
-The tests seed a Nova session by hand and send its cookie, which is how you can try the editor before the authentication chapter exists:
+The tests seed a Nova session by hand with a real login token and send its cookie, skipping the login form:
 
 ```erlang
-login(User) ->
+login(User) -> blog_data_fixtures:session(User).
+```
+
+```erlang
+%% blog_data_fixtures
+session(User) ->
     {ok, SessionId} = nova_session:generate_session_id(),
-    ok = nova_session_ets:set_value(SessionId, nova_auth_actor:session_key(), term_to_binary(User)),
+    ok = nova_session_ets:set_value(SessionId, ~"user_token", token(User)),
     SessionId.
 ```
 
@@ -112,7 +118,7 @@ Arizona's built-in `arizona_middleware:extract([path_bindings, params, ...])` co
 ```
 
 ```admonish note title="Logging in and out"
-A WebSocket is not re-authenticated when cookies change. Logging in or out happens in Nova controllers with a normal POST and redirect, so the browser loads a fresh page and opens a fresh socket. The user lookup above goes to the server-side session on every mount and navigation, so a session deleted at logout is noticed on the next one. Arizona also has its own encrypted cookie session (`arizona_middleware:fetch_session`), but the blog keeps one session, Nova's.
+A WebSocket is not re-authenticated when cookies change. Logging in or out happens in Nova controllers with a normal POST and redirect, so the browser loads a fresh page and opens a fresh socket. The user lookup above checks the session's token on every mount and navigation, so a session ended at logout, or a token revoked elsewhere, is noticed on the next one. Arizona also has its own encrypted cookie session (`arizona_middleware:fetch_session`), but the blog keeps one session, Nova's.
 ```
 
 ## The post editor

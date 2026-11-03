@@ -23,6 +23,8 @@
     delete_unknown_tag_is_404/1,
     delete_untags_posts/1,
     patch_is_405/1,
+    writes_need_a_bearer_token/1,
+    writes_need_the_admin_role/1,
     openapi_spec_lists_api_routes/1,
     generated_draft07_schema_is_rejected/1
 ]).
@@ -53,6 +55,8 @@ all() ->
         delete_unknown_tag_is_404,
         delete_untags_posts,
         patch_is_405,
+        writes_need_a_bearer_token,
+        writes_need_the_admin_role,
         openapi_spec_lists_api_routes,
         generated_draft07_schema_is_rejected
     ].
@@ -67,7 +71,8 @@ end_per_suite(_Config) ->
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
     {ok, Tag} = blog_tags:create_tag(#{~"name" => ~"erlang"}),
-    [{tag_path, "/api/tags/" ++ integer_to_list(maps:get(id, Tag))} | Config].
+    Token = blog_data_fixtures:token(blog_data_fixtures:admin(~"carol")),
+    [{tag_path, "/api/tags/" ++ integer_to_list(maps:get(id, Tag))}, {token, Token} | Config].
 
 end_per_testcase(_Case, _Config) ->
     blog_data_fixtures:checkin().
@@ -79,22 +84,30 @@ test_show(Config) ->
     {200, #{~"name" := ~"erlang", ~"posts" := []}} =
         blog_data_fixtures:request(get, ?config(tag_path, Config)).
 
-test_create(_Config) ->
+test_create(Config) ->
     {201, #{~"name" := ~"otp", ~"id" := Id}} =
-        blog_data_fixtures:request(post, "/api/tags", #{name => ~"otp"}),
+        blog_data_fixtures:request_as(?config(token, Config), post, "/api/tags", #{name => ~"otp"}),
     true = is_integer(Id).
 
 test_update(Config) ->
     {200, #{~"name" := ~"beam"}} =
-        blog_data_fixtures:request(put, ?config(tag_path, Config), #{name => ~"beam"}).
+        blog_data_fixtures:request_as(?config(token, Config), put, ?config(tag_path, Config), #{
+            name => ~"beam"
+        }).
 
 test_delete(Config) ->
-    {204, <<>>} = blog_data_fixtures:request(delete, ?config(tag_path, Config)),
+    {204, <<>>} = blog_data_fixtures:request_as(
+        ?config(token, Config), delete, ?config(tag_path, Config)
+    ),
     {404, _} = blog_data_fixtures:request(get, ?config(tag_path, Config)).
 
-list_is_sorted_by_name(_Config) ->
-    {201, _} = blog_data_fixtures:request(post, "/api/tags", #{name => ~"nova"}),
-    {201, _} = blog_data_fixtures:request(post, "/api/tags", #{name => ~"beam"}),
+list_is_sorted_by_name(Config) ->
+    {201, _} = blog_data_fixtures:request_as(?config(token, Config), post, "/api/tags", #{
+        name => ~"nova"
+    }),
+    {201, _} = blog_data_fixtures:request_as(?config(token, Config), post, "/api/tags", #{
+        name => ~"beam"
+    }),
     {200, #{~"tags" := Tags}} = blog_data_fixtures:request(get, "/api/tags"),
     [~"beam", ~"erlang", ~"nova"] = [Name || #{~"name" := Name} <- Tags].
 
@@ -119,63 +132,105 @@ show_unknown_tag_is_404(_Config) ->
 show_non_numeric_id_is_404(_Config) ->
     {404, #{~"error" := ~"not_found"}} = blog_data_fixtures:request(get, "/api/tags/abc").
 
-create_sets_location(_Config) ->
-    {201, Headers, Body} = raw(post, "/api/tags", "application/json", ~"{\"name\":\"otp\"}"),
+create_sets_location(Config) ->
+    {201, Headers, Body} = raw(
+        ?config(token, Config), post, "/api/tags", "application/json", ~"{\"name\":\"otp\"}"
+    ),
     #{~"id" := Id} = json:decode(Body),
     Location = "/api/tags/" ++ integer_to_list(Id),
     Location = proplists:get_value("location", Headers).
 
-create_duplicate_name_is_422(_Config) ->
+create_duplicate_name_is_422(Config) ->
     {422, #{~"errors" := #{~"name" := [~"has already been taken"]}}} =
-        blog_data_fixtures:request(post, "/api/tags", #{name => ~"erlang"}).
+        blog_data_fixtures:request_as(?config(token, Config), post, "/api/tags", #{
+            name => ~"erlang"
+        }).
 
-create_invalid_name_is_422(_Config) ->
+create_invalid_name_is_422(Config) ->
     {422, #{~"errors" := #{~"name" := [~"has invalid format"]}}} =
-        blog_data_fixtures:request(post, "/api/tags", #{name => ~"Not Valid!"}).
+        blog_data_fixtures:request_as(?config(token, Config), post, "/api/tags", #{
+            name => ~"Not Valid!"
+        }).
 
-create_without_name_is_400(_Config) ->
-    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"{}").
+create_without_name_is_400(Config) ->
+    {400, _, <<>>} = raw(?config(token, Config), post, "/api/tags", "application/json", ~"{}").
 
-create_with_unknown_field_is_400(_Config) ->
-    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"{\"name\":\"otp\",\"id\":7}").
+create_with_unknown_field_is_400(Config) ->
+    {400, _, <<>>} = raw(
+        ?config(token, Config),
+        post,
+        "/api/tags",
+        "application/json",
+        ~"{\"name\":\"otp\",\"id\":7}"
+    ).
 
-create_with_wrong_type_is_400(_Config) ->
-    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"{\"name\":42}").
+create_with_wrong_type_is_400(Config) ->
+    {400, _, <<>>} = raw(
+        ?config(token, Config), post, "/api/tags", "application/json", ~"{\"name\":42}"
+    ).
 
-create_non_object_is_400(_Config) ->
-    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"[\"otp\"]").
+create_non_object_is_400(Config) ->
+    {400, _, <<>>} = raw(
+        ?config(token, Config), post, "/api/tags", "application/json", ~"[\"otp\"]"
+    ).
 
-create_without_json_is_415(_Config) ->
-    {415, _, Body} = raw(post, "/api/tags", "text/plain", ~"otp"),
+create_without_json_is_415(Config) ->
+    {415, _, Body} = raw(?config(token, Config), post, "/api/tags", "text/plain", ~"otp"),
     #{~"error" := ~"expected a JSON body"} = json:decode(Body).
 
-create_malformed_json_is_400(_Config) ->
-    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"{\"name\":").
+create_malformed_json_is_400(Config) ->
+    {400, _, <<>>} = raw(
+        ?config(token, Config), post, "/api/tags", "application/json", ~"{\"name\":"
+    ).
 
-update_unknown_tag_is_404(_Config) ->
+update_unknown_tag_is_404(Config) ->
     {404, #{~"error" := ~"not_found"}} =
-        blog_data_fixtures:request(put, "/api/tags/999999", #{name => ~"otp"}).
+        blog_data_fixtures:request_as(?config(token, Config), put, "/api/tags/999999", #{
+            name => ~"otp"
+        }).
 
 update_invalid_name_is_422(Config) ->
     {422, #{~"errors" := #{~"name" := [~"should be at most 30 character(s)"]}}} =
-        blog_data_fixtures:request(put, ?config(tag_path, Config), #{
+        blog_data_fixtures:request_as(?config(token, Config), put, ?config(tag_path, Config), #{
             name => binary:copy(~"a", 31)
         }).
 
-delete_unknown_tag_is_404(_Config) ->
-    {404, #{~"error" := ~"not_found"}} = blog_data_fixtures:request(delete, "/api/tags/999999").
+delete_unknown_tag_is_404(Config) ->
+    {404, #{~"error" := ~"not_found"}} = blog_data_fixtures:request_as(
+        ?config(token, Config), delete, "/api/tags/999999"
+    ).
 
 delete_untags_posts(Config) ->
     Alice = blog_data_fixtures:user(~"alice"),
     #{id := PostId} = Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Tagged post"}),
     {ok, _} = blog_posts:tag_post(Post, [~"erlang"]),
-    {204, <<>>} = blog_data_fixtures:request(delete, ?config(tag_path, Config)),
+    {204, <<>>} = blog_data_fixtures:request_as(
+        ?config(token, Config), delete, ?config(tag_path, Config)
+    ),
     {200, #{~"tags" := []}} =
-        blog_data_fixtures:request(get, "/api/posts/" ++ integer_to_list(PostId)).
+        blog_data_fixtures:request_as(
+            ?config(token, Config), get, "/api/posts/" ++ integer_to_list(PostId)
+        ).
 
 patch_is_405(Config) ->
-    {405, Headers, <<>>} = raw(patch, ?config(tag_path, Config), "application/json", ~"{}"),
+    {405, Headers, <<>>} = raw(
+        ?config(token, Config), patch, ?config(tag_path, Config), "application/json", ~"{}"
+    ),
     "DELETE, GET, PUT" = proplists:get_value("allow", Headers).
+
+writes_need_a_bearer_token(Config) ->
+    {401, #{~"error" := ~"missing bearer token"}} =
+        blog_data_fixtures:request(post, "/api/tags", #{name => ~"otp"}),
+    {401, _} = blog_data_fixtures:request(put, ?config(tag_path, Config), #{name => ~"otp"}),
+    {401, _} = blog_data_fixtures:request(delete, ?config(tag_path, Config)),
+    {200, #{~"tags" := [_]}} = blog_data_fixtures:request(get, "/api/tags").
+
+writes_need_the_admin_role(Config) ->
+    Author = blog_data_fixtures:token(blog_data_fixtures:user(~"alice")),
+    {403, #{~"error" := ~"admins only"}} =
+        blog_data_fixtures:request_as(Author, post, "/api/tags", #{name => ~"otp"}),
+    {403, _} = blog_data_fixtures:request_as(Author, delete, ?config(tag_path, Config)),
+    {200, #{~"name" := ~"erlang"}} = blog_data_fixtures:request(get, ?config(tag_path, Config)).
 
 openapi_spec_lists_api_routes(_Config) ->
     {200, #{~"openapi" := ~"3.0.3", ~"paths" := Paths}} =
@@ -196,11 +251,12 @@ generated_draft07_schema_is_rejected(_Config) ->
 is_api_path(<<"/api/", _/binary>>) -> true;
 is_api_path(_) -> false.
 
-raw(Method, Path, ContentType, Body) ->
+raw(Token, Method, Path, ContentType, Body) ->
+    Auth = {"authorization", "Bearer " ++ binary_to_list(Token)},
     {ok, {{_, Status, _}, Headers, RespBody}} =
         httpc:request(
             Method,
-            {blog_data_fixtures:url(Path), [], ContentType, Body},
+            {blog_data_fixtures:url(Path), [Auth], ContentType, Body},
             [],
             [{body_format, binary}]
         ),

@@ -8,6 +8,11 @@
     {applications, [
         kernel,
         stdlib,
+        opentelemetry_exporter,
+        opentelemetry,
+        opentelemetry_experimental,
+        opentelemetry_nova,
+        opentelemetry_kura,
         nova,
         kura,
         kura_postgres,

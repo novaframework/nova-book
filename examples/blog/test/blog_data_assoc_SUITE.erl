@@ -115,7 +115,7 @@ api_create_comment(Config) ->
 post_with_comments(Config) ->
     Alice = ?config(alice, Config),
     Bob = ?config(bob, Config),
-    Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Commented"}),
+    Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Commented", ~"status" => ~"published"}),
     {ok, _} = blog_posts:add_comment(Post, Bob, #{~"body" => ~"Great post!"}),
     {ok, _} = blog_posts:add_comment(Post, Alice, #{~"body" => ~"Thanks!"}),
     {Post, Alice}.

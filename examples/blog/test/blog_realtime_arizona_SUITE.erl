@@ -3,6 +3,7 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, groups/0, init_per_suite/1, end_per_suite/1]).
+-export([init_per_testcase/2, end_per_testcase/2]).
 -export([
     counter_page_is_server_rendered/1,
     counter_renders_without_a_server/1,
@@ -50,13 +51,19 @@ groups() ->
     ].
 
 init_per_suite(Config) ->
-    {ok, _} = application:ensure_all_started(blog),
-    {ok, _} = application:ensure_all_started(inets),
+    blog_data_fixtures:start(),
     {ok, _} = application:ensure_all_started(gun),
     Config.
 
 end_per_suite(_Config) ->
     application:stop(blog).
+
+init_per_testcase(_Case, Config) ->
+    blog_data_fixtures:checkout(),
+    Config.
+
+end_per_testcase(_Case, _Config) ->
+    blog_data_fixtures:checkin().
 
 %% Counter
 
@@ -126,7 +133,7 @@ editor_websocket_requires_login(_Config) ->
     ?assertEqual({error, 302}, blog_ws_client:connect("/live/ws?_az_path=/live/editor")).
 
 editor_mounts_for_session_user(_Config) ->
-    Session = login(#{id => 1, provider => password}),
+    Session = blog_data_fixtures:session(blog_data_fixtures:user(~"alice")),
     {200, _, Body} = http_get("/live/editor", [{"cookie", "session_id=" ++ binary_to_list(Session)}]),
     ?assertMatch({match, _}, re:run(Body, ~"<h1>Write a post</h1>")),
     ?assertMatch({match, _}, re:run(Body, ~"az-view id=\"tags\"")).
@@ -150,7 +157,7 @@ editor_splits_paragraphs_and_counts_words(_Config) ->
     ?assertEqual([], blog_live_editor:paragraphs(~"")).
 
 editor_preview_over_websocket(_Config) ->
-    Session = login(#{id => 1, provider => password}),
+    Session = blog_data_fixtures:session(blog_data_fixtures:user(~"alice")),
     {ok, Client} = blog_ws_client:connect("/live/ws?_az_path=/live/editor", [
         {~"cookie", <<"session_id=", Session/binary>>}
     ]),
@@ -197,11 +204,6 @@ tag_input_rejects_invalid_and_extra_tags(_Config) ->
     ?assertEqual(5, length(maps:get(tags, Rejected))).
 
 %% Helpers
-
-login(User) ->
-    {ok, SessionId} = nova_session:generate_session_id(),
-    ok = nova_session_ets:set_value(SessionId, nova_auth_actor:session_key(), term_to_binary(User)),
-    SessionId.
 
 http_get(Path) ->
     http_get(Path, []).

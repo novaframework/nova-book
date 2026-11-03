@@ -13,7 +13,8 @@
 
 index(Req) ->
     Params = maps:from_list(cowboy_req:parse_qs(Req)),
-    case blog_posts:list_posts(Params) of
+    Viewer = maps:get(auth_data, Req, undefined),
+    case blog_posts:list_posts(blog_posts:visible_to(Viewer), Params) of
         {ok, #{entries := Posts} = Page} ->
             {json, #{
                 posts => [blog_api_json:post(Post) || Post <- Posts],
@@ -25,10 +26,18 @@ index(Req) ->
             {json, 400, #{}, #{errors => blog_api_json:errors(CS)}}
     end.
 
-show(#{bindings := #{~"id" := Id}}) ->
+show(#{bindings := #{~"id" := Id}} = Req) ->
+    Viewer = maps:get(auth_data, Req, undefined),
     case blog_posts:get_post(Id, [author, tags, {comments, [author]}]) of
-        {ok, Post} -> {json, blog_api_json:post(Post)};
-        {error, not_found} -> not_found()
+        {ok, #{status := published} = Post} ->
+            {json, blog_api_json:post(Post)};
+        {ok, Post} ->
+            case blog_policy:can(Viewer, view_draft, Post) of
+                true -> {json, blog_api_json:post(Post)};
+                false -> not_found()
+            end;
+        {error, not_found} ->
+            not_found()
     end.
 
 create(#{json := Params, auth_data := Actor}) ->

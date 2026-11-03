@@ -27,7 +27,7 @@ Global plugins are listed in the `nova` section of the sys.config. The companion
 ]}
 ```
 
-Each entry is `{Phase, Module, Options}`, with `Phase` either `pre_request` or `post_request`. These apply to every route group that does not declare its own `plugins`.
+Each entry is `{Phase, Module, Options}`, with `Phase` either `pre_request` or `post_request`. These apply to every route group that does not declare its own `plugins`. ([Custom Plugins & CORS](../production/plugins-cors.md) later wraps this list in a request logger.)
 
 ## nova_request_plugin
 

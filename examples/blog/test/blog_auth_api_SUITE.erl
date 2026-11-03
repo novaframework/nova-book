@@ -82,7 +82,9 @@ write_with_unknown_token_is_401(_Config) ->
     {401, _, _, _} = blog_web:post_json(#{}, "/api/posts", #{title => ~"Nope"}, Garbage).
 
 reads_are_public(Config) ->
-    #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Public"}),
+    #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{
+        ~"title" => ~"Public", ~"status" => ~"published"
+    }),
     {200, _} = blog_data_fixtures:request(get, "/api/posts"),
     {200, #{~"title" := ~"Public"}} = blog_data_fixtures:request(
         get, "/api/posts/" ++ integer_to_list(Id)

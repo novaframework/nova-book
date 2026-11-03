@@ -191,13 +191,13 @@ require_token(Req) ->
             {false, 401, #{~"www-authenticate" => ~"X-Ops-Token"}, ~"unauthorized\n"}
     end.
 
-matches(Given, Expected) when is_binary(Given), is_binary(Expected) ->
+matches(Given, Expected) when is_binary(Given), is_binary(Expected), Expected =/= ~"" ->
     crypto:hash_equals(crypto:hash(sha256, Given), crypto:hash(sha256, Expected));
 matches(_Given, _Expected) ->
     false.
 ```
 
-The token comes from configuration, never from code (`{blog, [{ops_token, ~"dev-ops-token"}]}` in `dev_sys.config.src`). If it is not configured every request is refused, and the comparison uses `crypto:hash_equals/2` so its timing does not leak how much of a guess was right.
+The token comes from configuration, never from code (`{blog, [{ops_token, ~"dev-ops-token"}]}` in `dev_sys.config.src`). If it is not configured, or configured empty (an unset environment variable in production, see [Configuration](../production/configuration.md)), every request is refused, and the comparison uses `crypto:hash_equals/2` so its timing does not leak how much of a guess was right.
 
 A security function can return:
 

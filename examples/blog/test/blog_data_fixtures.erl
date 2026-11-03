@@ -1,7 +1,7 @@
 -module(blog_data_fixtures).
 
 -export([start/0, checkout/0, checkin/0, user/1, post/2, url/1, request/3, request/2]).
--export([token/1, request_as/3, request_as/4]).
+-export([token/1, request_as/3, request_as/4, session/1, admin/1]).
 
 start() ->
     ok = application:set_env(nova_auth, pbkdf2_iterations, 1000),
@@ -45,6 +45,15 @@ request(Method, Path, Json) ->
     {ok, {{_, Status, _}, _, RespBody}} =
         httpc:request(Method, {url(Path), [], "application/json", Body}, [], [{body_format, binary}]),
     {Status, decode(RespBody)}.
+
+admin(Name) ->
+    {ok, Admin} = blog_repo:update(blog_user:role_changeset(user(Name), #{role => admin})),
+    Admin.
+
+session(User) ->
+    {ok, SessionId} = nova_session:generate_session_id(),
+    ok = nova_session_ets:set_value(SessionId, ~"user_token", token(User)),
+    SessionId.
 
 token(User) ->
     {ok, Token} = blog_accounts:issue_token(User),

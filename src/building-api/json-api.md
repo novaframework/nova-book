@@ -202,7 +202,7 @@ tag(Tag) ->
 Add `tag/1` to the module's export list.
 
 ```admonish note title="Who may change tags?"
-Like the posts API at this stage, the tags API has `security => false`, so anyone can create and delete tags. Part III adds authentication and decides who may manage them; `rebar3 nova audit` (next chapter) lists every write route that is still open.
+Like the posts API at this stage, the tags API has `security => false`, so anyone can create and delete tags. `rebar3 nova audit` (next chapter) lists every write route that is still open, and [Security](../production/security.md#tag-writes-need-an-admin) moves the write routes into their own group that requires an admin's bearer token. The tests in the companion app already send one.
 ```
 
 ## Validating request bodies with JSON schemas

@@ -32,7 +32,7 @@ not_found(Req) ->
     {halt, arizona_req:put_resp_status(Req, 404)}.
 
 session_user(Req) ->
-    case nova_auth_actor:fetch(arizona_req:raw(Req)) of
-        {ok, User} -> User;
-        {error, not_found} -> undefined
+    case blog_security:session_actor(arizona_req:raw(Req)) of
+        {ok, Actor} -> Actor;
+        {error, _} -> undefined
     end.

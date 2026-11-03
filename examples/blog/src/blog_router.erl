@@ -13,7 +13,8 @@ routes(_Environment) ->
             security => false,
             routes => [
                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
-                {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
+                {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}},
+                {"/health", fun blog_health_controller:ready/1, #{methods => [get]}}
             ]
         },
         #{
@@ -71,10 +72,15 @@ routes(_Environment) ->
         },
         #{
             prefix => "/api",
-            security => false,
+            security => fun blog_security:optional_bearer/1,
+            plugins => [
+                {pre_request, blog_cors_plugin, api_cors()},
+                {pre_request, blog_request_logger, #{}},
+                {post_request, blog_request_logger, #{}}
+            ],
             routes => [
-                {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
-                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}}
+                {"/posts", fun blog_posts_controller:index/1, #{methods => [get, options]}},
+                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get, options]}}
             ]
         },
         #{
@@ -150,22 +156,25 @@ routes(_Environment) ->
         #{
             prefix => "/api",
             security => false,
-            plugins => [
-                {pre_request, nova_request_plugin, #{decode_json_body => true}},
-                {pre_request, blog_require_json_plugin, #{}},
-                {pre_request, nova_json_schemas, #{render_errors => false}}
-            ],
+            plugins => tag_plugins(),
             routes => [
                 {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
                 {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}},
+                {"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "/api",
+            security => fun blog_security:require_admin_bearer/1,
+            plugins => tag_plugins(),
+            routes => [
                 {"/tags", fun blog_tags_controller:create/1, #{
                     methods => [post], extra_state => #{json_schema => "schemas/tag.json"}
                 }},
                 {"/tags/:id", fun blog_tags_controller:update/1, #{
                     methods => [put], extra_state => #{json_schema => "schemas/tag.json"}
                 }},
-                {"/tags/:id", fun blog_tags_controller:delete/1, #{methods => [delete]}},
-                {"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
+                {"/tags/:id", fun blog_tags_controller:delete/1, #{methods => [delete]}}
             ]
         },
         #{
@@ -221,6 +230,21 @@ html_plugins() ->
     [
         {pre_request, nova_request_plugin, #{read_urlencoded_body => true}},
         {pre_request, nova_csrf_plugin, #{}}
+    ].
+
+api_cors() ->
+    #{
+        allow_origins => application:get_env(blog, cors_origins, []),
+        allow_methods => ~"GET",
+        allow_headers => ~"authorization",
+        max_age => 600
+    }.
+
+tag_plugins() ->
+    [
+        {pre_request, nova_request_plugin, #{decode_json_body => true}},
+        {pre_request, blog_require_json_plugin, #{}},
+        {pre_request, nova_json_schemas, #{render_errors => false}}
     ].
 
 login_rate_limit() ->

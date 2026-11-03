@@ -1,155 +1,305 @@
 # Configuration
 
-Nova uses standard OTP application configuration via `sys.config`. This chapter covers organizing configuration across environments, using environment variables, and the key settings you'll need.
+Everything the blog needs at runtime (the port, the database, the encryption key, the plugins) lives in OTP application environment, written as a `sys.config` file. This chapter walks through the blog's three config files, shows how the production one gets its secrets from the environment, and lists the Nova keys that Nova 0.18.1 actually reads.
 
-## Configuration files
+## Three files, three ways in
 
-The generated project includes two config files:
+| File | Used by | Variables |
+|---|---|---|
+| `config/dev_sys.config.src` | `rebar3 shell` and `rebar3 nova serve` (`{shell, [{config, ...}]}` in `rebar.config`) | none |
+| `config/test_sys.config` | `rebar3 ct` (`ct_opts` in the `test` profile) | none |
+| `config/prod_sys.config.src` | the release built by `rebar3 as prod release` | `${VAR}`, filled in at boot |
 
-- `config/dev_sys.config.src` — development settings (used by `rebar3 shell` and `rebar3 nova serve`)
-- `config/prod_sys.config.src` — production settings (used when building releases)
-
-The `.src` suffix means rebar3 processes the file as a template — `${VAR}` references are replaced with environment variables at build time.
-
-## Development config
+`rebar.config` points relx at the production files in the `prod` profile:
 
 ```erlang
-[
-  {kernel, [
-    {logger_level, debug},
-    {logger, [
-      {handler, default, logger_std_h,
-        #{formatter => {flatlog, #{
-            map_depth => 3,
-            term_depth => 50,
-            colored => true,
-            template => [colored_start, "[\033[1m", level, "\033[0m",
-                         colored_start, "] ", msg, "\n", colored_end]
-          }}}}
-    ]}
-  ]},
-  {nova, [
-         {use_stacktrace, true},
-         {environment, dev},
-         {cowboy_configuration, #{port => 8080}},
-         {dev_mode, true},
-         {bootstrap_application, blog},
-         {plugins, [
-                    {pre_request, nova_request_plugin, #{
-                        read_urlencoded_body => true,
-                        decode_json_body => true,
-                        parse_qs => true
-                    }}
-                   ]}
-        ]},
-  {blog, [
-         {database, <<"blog_dev">>}
+{profiles, [
+    {prod, [
+        {relx, [
+            {mode, prod},
+            {sys_config_src, "./config/prod_sys.config.src"},
+            {vm_args_src, "./config/prod_vm.args.src"}
         ]}
-].
+    ]},
 ```
 
-## Production config
+The `.src` suffix matters only to relx. The dev file has no variables in it, so `rebar3 shell` simply reads it as Erlang terms.
+
+## Development and test
+
+The dev config is the one you have been editing since Part I. Trimmed to the parts this chapter talks about:
 
 ```erlang
-[
-  {kernel, [
-    {logger_level, info},
-    {logger, [
-      {handler, default, logger_std_h,
-        #{config => #{file => "log/erlang.log"},
-          formatter => {flatlog, #{
-            map_depth => 3,
-            term_depth => 50,
-            colored => false,
-            template => ["[", level, "] ", msg, "\n"]
-          }}}}
-    ]}
-  ]},
-  {nova, [
-         {use_stacktrace, false},
-         {environment, prod},
-         {cowboy_configuration, #{port => 8080}},
-         {dev_mode, false},
-         {bootstrap_application, blog},
-         {plugins, [
-                    {pre_request, nova_correlation_plugin, #{
-                        request_correlation_header => <<"x-correlation-id">>,
-                        logger_metadata_key => correlation_id
-                    }},
-                    {pre_request, nova_request_plugin, #{
-                        decode_json_body => true,
-                        read_urlencoded_body => true,
-                        parse_qs => true
-                    }},
-                    {pre_request, nova_csrf_plugin, #{
-                        excluded_paths => [<<"/api/">>]
-                    }}
-                   ]}
-        ]},
-  {blog, [
-      {database, <<"${DB_NAME}">>},
-      {db_host, <<"${DB_HOST}">>},
-      {db_user, <<"${DB_USER}">>},
-      {db_password, <<"${DB_PASSWORD}">>},
-      {sendgrid_api_key, <<"${SENDGRID_API_KEY}">>}
-  ]}
-].
+{blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}, {metrics_port, 9464}, {cors_origins, [~"http://localhost:5173"]}]},
+{nova, [
+    {use_stacktrace, true},
+    {environment, dev},
+    {cowboy_configuration, #{port => 8080, ...}},
+    {bootstrap_application, blog},
+    ...
+]},
+{kura, [
+    {repos, #{
+        blog_repo => #{
+            backend => kura_backend_postgres,
+            host => "localhost",
+            port => 5432,
+            database => "blog_dev",
+            user => "postgres",
+            password => "postgres",
+            pool_size => 10
+        }
+    }},
+    {encryption, #{
+        active => 1,
+        keys => [{1, <<"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q=">>}]
+    }}
+]}
 ```
 
-Key differences from development:
-- Logger level is `info` instead of `debug`
-- `use_stacktrace` is `false` — don't leak stack traces to users
-- Correlation plugin is enabled for request tracing
-- CSRF plugin is enabled
-- Secrets use `${VAR}` environment variable substitution
-- `sendgrid_api_key` is stored under the `blog` app — the `blog_mailer` module reads it via `application:get_env/3` (see [Sending Email](../email/sending-email.md))
+`test_sys.config` has the same shape with `blog_test`, `logger_level` at `warning`, `{metrics_port, 0}` (any free port, so suites never collide) and a span processor that hands spans straight to the test process (see [Observability](opentelemetry.md)). The dev and test keys are committed on purpose: they protect nothing but local databases.
+
+## Production: secrets from the environment
+
+The production file has no secrets in it. Every value that differs between deployments is a `${VAR}`:
+
+```erlang
+{blog, [
+    {json_lib, blog_json},
+    {ops_token, ~"${BLOG_OPS_TOKEN}"},
+    {metrics_port, ${METRICS_PORT:-9464}},
+    {cors_origins, []},
+    {base_url, ~"${BLOG_BASE_URL}"},
+    {mailer, #{
+        adapter => hikyaku_adapter_mailgun,
+        api_key => ~"${MAILGUN_API_KEY}",
+        domain => ~"${MAILGUN_DOMAIN}",
+        base_url => ~"https://api.eu.mailgun.net"
+    }},
+    {mail_from, {~"Nova Blog", ~"${MAIL_FROM}"}}
+]},
+{shigoto, [
+    {repo, blog_repo},
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+]},
+{nova, [
+    {environment, prod},
+    {use_stacktrace, false},
+    {bootstrap_application, blog},
+    {shutdown_drain_timeout, 10000},
+    {cowboy_configuration, #{
+        port => ${HTTP_PORT:-8080},
+        ...
+    }},
+    ...
+]},
+{kura, [
+    {repos, #{
+        blog_repo => #{
+            backend => kura_backend_postgres,
+            host => "${DB_HOST}",
+            port => ${DB_PORT:-5432},
+            database => "${DB_NAME}",
+            user => "${DB_USER}",
+            password => "${DB_PASSWORD}",
+            pool_size => 10
+        }
+    }},
+    {migration_lock_timeout, 60000},
+    {encryption, #{
+        active => 1,
+        keys => [{1, ~"${KURA_ENCRYPTION_KEY}"}]
+    }}
+]},
+```
+
+The release's start script (`bin/blog`, generated by relx) replaces the variables **every time the node boots**. It reads `releases/<vsn>/sys.config.src`, substitutes `${VAR}` with the value from the environment (`${VAR:-default}` when the variable is unset or empty), writes the result to `releases/<vsn>/sys.config` and starts the VM with that file. `vm.args.src` gets the same treatment. You do not need `RELX_REPLACE_OS_VARS` for `.src` files; that variable is for plain `sys.config` files with `${VAR}` in them.
+
+Two consequences:
+
+- The directory must be writable by the user that runs the node, or `RELX_OUT_FILE_PATH` must point somewhere that is (the Docker image in [Deployment](deployment.md) uses `/tmp`).
+- The generated `sys.config` contains the real database password and keys. Treat that file like the secrets themselves: do not copy it into backups or bug reports.
+
+### Quote strings, give numbers a default
+
+Substitution is plain text replacement, done before Erlang parses the file. That makes the quoting rules important:
+
+| Written as | `DB_HOST=db` | Variable unset |
+|---|---|---|
+| `host => "${DB_HOST}"` | `"db"` | `""`: parses, fails later at connect time |
+| `port => ${DB_PORT:-5432}` | as given | `5432` |
+| `port => ${DB_PORT}` | as given | `port => ,`: the file no longer parses and the node does not boot |
+
+Strings go in quotes so that any value parses. Numbers cannot be quoted (Kura wants an integer port), so every unquoted variable gets a `:-` default. Even then the value is pasted in as Erlang: `DB_PORT=five` parses as the atom `five`, the node boots, and the pool cannot connect:
+
+```shell
+DB_PORT=five bin/blog foreground
+```
+
+```
+{..."reason":"{socket,einval}",...,"event":"connect_failed","retry_in_ms":100}
+...
+{..."msg":"kura_migrator pool not ready","level":"error","pool":"blog_repo"}
+Kernel pid terminated (application_controller) ("{application_start_failure,blog,{bad_return,{{blog_app,start,[normal,[]]},{'EXIT',{{badmatch,{error,pool_unavailable}},...
+```
+
+An empty `"${BLOG_OPS_TOKEN}"` is the subtle case: it is a valid empty binary. Until this chapter, `blog_ops_security` compared the SHA-256 of the header with that of the token and nothing else, so with the variable unset a request carrying an empty `x-ops-token:` header matched the empty token. The guard now refuses an empty expected token:
+
+```erlang
+matches(Given, Expected) when is_binary(Given), is_binary(Expected), Expected =/= ~"" ->
+    crypto:hash_equals(crypto:hash(sha256, Given), crypto:hash(sha256, Expected));
+matches(_Given, _Expected) ->
+    false.
+```
+
+`blog_prod_security_SUITE:empty_ops_token_refuses_everyone` pins it: with `ops_token` set to `~""`, an empty header gets 401.
+
+### Fail at boot, not at the first write
+
+Kura treats a missing or empty encryption key as "no key" and only complains when something is encrypted, which for the blog is the first registration (`full_name` is an `{encrypted, string}` field). `blog_app:start/2` checks the key before anything else, so a release with `KURA_ENCRYPTION_KEY` unset never starts:
+
+```erlang
+start(_StartType, _StartArgs) ->
+    ok = require_encryption_key(),
+    {ok, _} = kura_migrator:migrate(blog_repo),
+    ...
+
+require_encryption_key() ->
+    case kura_keyring_env:active() of
+        {_KeyId, _Key} -> ok;
+        undefined -> error({missing_config, kura_encryption_key})
+    end.
+```
+
+```
+Kernel pid terminated (application_controller) ("{application_start_failure,blog,{bad_return,{{blog_app,start,[normal,[]]},{'EXIT',{{missing_config,kura_encryption_key},...
+```
+
+Generate a key with `openssl rand -base64 32` and keep it with the database backups: rows encrypted with a lost key are gone.
+
+### Why not set it in `init/1` or `blog_app`?
+
+It is tempting to skip `sys.config` and call `application:set_env(kura, repos, ...)` from `blog_app:start/2` with values from `os:getenv/1`. That does not work for Kura: `kura_app:start/2` starts one pool per configured repo, and `kura` is in the `applications` list of `blog.app.src`, so it starts before `blog` and its pools are already up (with whatever config there was) by the time `blog_app` runs. The same goes for Nova's listener port and the OpenTelemetry exporters. Values that a dependency reads when it starts belong in `sys.config`, where they exist before any application starts. Values that only your own code reads (`ops_token`, `cors_origins`) could be read at run time, but keeping them all in one file is simpler.
+
+## Shigoto and the mailer
+
+Shigoto's own settings (`repo`, queues, pruning) are covered in [Background Jobs](../jobs/background-jobs.md#configuration). Its production entry (shown above) needs no secrets: it reuses `blog_repo`'s pool. `shigoto` is in the blog's `applications`, so a release without a `shigoto` section does not start at all; the config guard below checks every file points it at the repo.
+
+The mailer is the Mailgun variant from [Sending Email](../email/sending-email.md), with its key and domain from the environment. `base_url` is what confirmation and reset links are built from; without it they would point at `http://localhost:8080`.
+
+## Guarding the configs with a test
+
+Config files are code nobody runs until deployment. `blog_prod_config_SUITE` parses all three and checks the promises this chapter makes. It cannot boot the production file without the environment, so it does its own substitution: `${VAR}` becomes an `@VAR@` atom-shaped placeholder and `${VAR:-D}` becomes `D`, then the text is parsed with `erl_scan` and `erl_parse`, exactly as the release would see it with the defaults:
+
+```erlang
+substitute(Text) ->
+    re:replace(Text, ~"\\$\\{([A-Z_]+)(:-)?([^}]*)\\}", fun ?MODULE:replacement/2, [
+        global, {return, binary}
+    ]).
+
+replacement(_Match, [Name, ~"", _]) -> <<"@", Name/binary, "@">>;
+replacement(_Match, [_Name, ~":-", Default]) -> Default.
+```
+
+The placeholder is unquoted on purpose: inside quotes it becomes a string, and outside quotes `@` is not valid Erlang, so a numeric `${VAR}` without a default makes the parse fail just as it would at boot. The tests:
+
+```erlang
+prod_secrets_come_from_the_environment(_Config) ->
+    File = prod(),
+    #{host := "@DB_HOST@", user := "@DB_USER@", password := "@DB_PASSWORD@"} = repo(File),
+    #{api_key := ~"@MAILGUN_API_KEY@", domain := ~"@MAILGUN_DOMAIN@"} = env(File, blog, mailer),
+    ~"@BLOG_BASE_URL@" = env(File, blog, base_url),
+    #{host := "@DB_HOST@", user := "@DB_USER@", password := "@DB_PASSWORD@"} = repo(File),
+    [{1, ~"@KURA_ENCRYPTION_KEY@"}] = maps:get(keys, env(File, kura, encryption)),
+    ~"@BLOG_OPS_TOKEN@" = env(File, blog, ops_token).
+
+prod_numbers_have_defaults(_Config) ->
+    File = prod(),
+    #{port := 5432} = repo(File),
+    #{port := 8080} = env(File, nova, cowboy_configuration),
+    9464 = env(File, blog, metrics_port).
+
+prod_is_hardened(_Config) ->
+    File = prod(),
+    prod = env(File, nova, environment),
+    false = env(File, nova, use_stacktrace),
+    #{stream_handlers := Handlers} = env(File, nova, cowboy_configuration),
+    [nova_stream_h, blog_session_h] = [
+        H
+     || H <- Handlers, lists:member(H, [nova_stream_h, blog_session_h])
+    ],
+    [] = [Route || {mcp, _, _, _} = Route <- env(File, arizona_nova, routes)].
+```
+
+Others check that every file parses and declares `blog_repo` with an integer port, that the production Arizona routes are the tested ones minus the dev-only MCP endpoint, that `prod_vm.args.src` takes the cookie from `${RELEASE_COOKIE}`, and that `${PORT}` without a default is indeed rejected. `prod_is_hardened` is the one that matters most: it fails if someone turns stack traces back on or moves `blog_session_h` (the session cookie hardening from [Sessions](../auth-sessions/sessions.md)) in front of `nova_stream_h`.
+
+```shell
+rebar3 ct --suite=test/blog_prod_config_SUITE
+```
+
+```
+All 8 tests passed.
+```
 
 ## Nova configuration reference
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `bootstrap_application` | *(required)* | Main application to bootstrap |
-| `environment` | `dev` | Current environment (`dev` or `prod`) |
-| `cowboy_configuration` | `#{port => 8080}` | Cowboy listener settings |
-| `plugins` | `[]` | Global middleware plugins |
-| `json_lib` | `thoas` | JSON encoding library |
-| `use_stacktrace` | `false` | Include stacktraces in error responses |
-| `use_sessions` | `true` | Enable session management |
-| `session_manager` | `nova_session_ets` | Session backend module |
-| `dev_mode` | `false` | Enable development features |
-| `render_error_pages` | `true` | Use custom error page controllers |
-| `dispatch_backend` | `persistent_term` | Route dispatch storage backend |
+These are the keys Nova 0.18.1 reads, checked against its source. Most live in the `nova` application; a few are read with `nova:get_env/2`, which looks in the **bootstrap application's** environment (`{blog, [...]}`), not in `{nova, [...]}`.
 
-## Environment-based routing
+| Key | Where | Default | Meaning |
+|---|---|---|---|
+| `bootstrap_application` | `nova` | required | Your application; its router is compiled first |
+| `environment` | `nova` | `dev` | Passed to `routes/1` |
+| `cowboy_configuration` | `nova` | `#{}` | Listener settings, see below |
+| `plugins` | `nova` | `[]` | Global plugins for groups without their own `plugins` |
+| `use_stacktrace` | `nova` | `false` | Log stack traces of controller crashes and pass them to the 500 handler |
+| `render_error_pages` | `nova` | `true` | Use your status routes (`{404, ...}`) for errors |
+| `session_manager` | `nova` | `nova_session_ets` | Session backend |
+| `use_strict_routing` | `nova` | `false` | Refuse to boot on conflicting routes |
+| `dispatch_backend` | `nova` | `persistent_term` | Where the compiled routes are stored |
+| `use_persistent_term` | `nova` | `true` | `false` hands the dispatch table to Cowboy in its `env` instead |
+| `shutdown_delay` | `nova` | `0` | Milliseconds to wait before suspending listeners at shutdown |
+| `shutdown_drain_timeout` | `nova` | `15000` | Milliseconds to wait for open connections at shutdown |
+| `json_lib` | bootstrap app | `thoas` | JSON module (the blog uses `blog_json`) |
+| `use_sessions` | bootstrap app | `true` | Set the `session_id` cookie |
+| `nova_apps` | bootstrap app | `[]` | Other Nova applications to mount |
+| `router_module` | each app | `<app>_router` | Router module name |
+| `watchers` | bootstrap app | `[]` | Commands `rebar3 nova serve` runs alongside the node |
 
-The `routes/1` function receives the environment atom:
+`cowboy_configuration` takes `port` (8080), `ip` (`{0,0,0,0}`), `use_ssl`, `ssl_port` (8443) and `ssl_options`, `stream_handlers`, `middleware_handlers` and `options` (Cowboy protocol options, default `#{compress => true}`). The blog sets the two handler lists explicitly because it adds its own stream handlers and Arizona's middleware.
 
-```erlang
-routes(prod) -> prod_routes();
-routes(dev) -> prod_routes() ++ dev_routes().
+```admonish warning title="Keys that do nothing"
+Older guides, the previous edition of this book and the scaffold's configs set `{dev_mode, true}` in the `nova` section. Nova 0.18.1 never reads it, so the blog's configs no longer have it. (`dev_mode` in the `relx` section is a different, real setting.) `{nova, [{json_lib, ...}]}` and `{nova, [{use_sessions, ...}]}` are silently ignored too: those two belong in the bootstrap application.
 ```
 
-This lets you add development-only routes (debug tools, test endpoints) without them leaking into production.
+## Environment-specific routes
+
+`routes/1` receives the `environment` value, so a router can add routes only in development:
+
+```erlang
+routes(prod) -> routes();
+routes(_Environment) -> routes() ++ dev_routes().
+```
+
+The blog does not need this: its one dev-only endpoint, Arizona's MCP server, is an `arizona_nova` route, and the production config simply leaves it out (which `prod_serves_the_tested_live_routes` checks).
 
 ## VM arguments
 
-`config/vm.args.src` controls Erlang VM settings:
+`config/prod_vm.args.src` holds the flags for the Erlang VM itself:
 
 ```
--name blog@${HOSTNAME}
+-sname blog@localhost
 -setcookie ${RELEASE_COOKIE}
+-kernel inet_dist_use_interface {127,0,0,1}
 +K true
 +A30
-+sbwt very_long
-+swt very_low
 ```
 
-- `-name` — full node name (needed for clustering)
-- `-setcookie` — cluster security cookie
-- `+K` — enable kernel poll
-- `+A` — async thread pool size
-- `+sbwt` / `+swt` — scheduler busy-wait tuning
+- `-setcookie ${RELEASE_COOKIE}`: the distribution cookie is a password for full remote access to the node. It comes from the environment like every other secret; the dev `vm.args.src` has a fixed `blog_cookie`, which is fine only on your laptop.
+- `-kernel inet_dist_use_interface {127,0,0,1}`: Erlang distribution listens only on loopback, so `bin/blog remote_console` and `bin/blog eval` work on the machine itself and nothing else can connect.
+- `-sname blog@localhost`: with distribution bound to loopback, the node name must resolve to it. With a plain `-sname blog` the host part is the machine's hostname, and `bin/blog ping` answers "Node is not running!" even though it is.
+
+Clustering needs the opposite choices (a routable name and interface); [Deployment](deployment.md#clustering) has the notes.
 
 ---
 
-Next: [Observability](opentelemetry.md) — tracing, metrics, and logging in production.
+Next: [Observability](opentelemetry.md), where the configs grow tracing and metrics.
