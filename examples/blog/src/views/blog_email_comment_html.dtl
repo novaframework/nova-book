@@ -1,0 +1,4 @@
+<p>Hi {{ author }},</p>
+<p><strong>{{ commenter }}</strong> left a comment on your post <em>{{ title }}</em>:</p>
+<blockquote>{{ comment }}</blockquote>
+<p><a href="{{ url }}">Read the discussion</a></p>

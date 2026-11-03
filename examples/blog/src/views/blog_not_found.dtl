@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Not found</title>
+</head>
+<body>
+  <h1>Not found</h1>
+  <p>Nothing lives at <code>{{ path }}</code>.</p>
+  <p><a href="/">Back to the front page</a></p>
+</body>
+</html>

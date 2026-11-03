@@ -1,0 +1,8 @@
+{% autoescape off %}Hi {{ author }},
+
+{{ commenter }} left a comment on your post "{{ title }}":
+
+{{ comment }}
+
+Read the discussion: {{ url }}
+{% endautoescape %}

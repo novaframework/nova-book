@@ -1,274 +1,415 @@
 # Plugins
 
-Plugins are Nova's middleware system. They run code before and after your controller handles a request — useful for decoding request bodies, adding headers, logging, rate limiting, and more.
+Plugins are Nova's middleware. They run before and after your controller and handle the cross-cutting work: decoding bodies, CSRF checks, CORS headers, correlation IDs, uploads. Nova ships a handful of them, and in this chapter we use all of them in the blog.
 
-## How the plugin pipeline works
+## The request pipeline
 
-Every HTTP request flows through a pipeline:
+Every request passes through the same stages:
 
-1. **Pre-request plugins** run in list definition order (first in the list runs first)
-2. The **controller** handles the request
-3. **Post-request plugins** run in list definition order
+1. **Router** - finds the route (or answers 404/405 straight away)
+2. **Pre-request plugins** - in list order
+3. **Security** - the group's security function, if any
+4. **Controller**
+5. **Post-request plugins** - in list order
 
-A plugin module implements the `nova_plugin` behaviour and exports `pre_request/4`, `post_request/4`, and `plugin_info/0`.
+Because pre-request plugins run *before* security, a plugin can prepare data the security function needs (a decoded body, a correlation ID in the logs). It also means plugins run for requests that security then rejects.
 
-Each callback receives `(Req, Env, Options, State)` and returns `{ok, Req, State}` to pass control to the next plugin. Plugins can also enrich the request map — adding keys like `json`, `params`, or `correlation_id` — so that later plugins and controllers can use them.
+A plugin is a module implementing the `nova_plugin` behaviour: `pre_request/4`, `post_request/4` and `plugin_info/0`. Each callback gets `(Req, Env, Options, State)` and returns `{ok, Req, State}` to continue, or `{stop, Req, State}` after replying itself. They can add keys to the request map, which is where `json`, `params` and friends come from. Writing your own is covered in [Custom Plugins & CORS](../production/plugins-cors.md).
 
 ## Configuring plugins
 
-Plugins are configured in `sys.config` under the `nova` application key:
-
-```erlang
-{nova, [
-    {plugins, [
-        {pre_request, nova_request_plugin, #{decode_json_body => true}}
-    ]}
-]}
-```
-
-Each plugin entry is a tuple: `{Phase, Module, Options}` where Phase is `pre_request` or `post_request`.
-
-## nova_request_plugin
-
-This built-in plugin handles request body decoding and query string parsing. It supports three options:
-
-| Option | Type | Request map key | Description |
-|---|---|---|---|
-| `decode_json_body` | `true` | `json` | Decodes JSON request bodies |
-| `read_urlencoded_body` | `true` | `params` | Decodes URL-encoded form bodies |
-| `parse_qs` | `true \| list` | `parsed_qs` | Parses the URL query string |
-
-### decode_json_body
-
-When enabled, requests with `Content-Type: application/json` have their body decoded and placed in the `json` key:
-
-```erlang
-{pre_request, nova_request_plugin, #{decode_json_body => true}}
-```
-
-```erlang
-create(#{json := #{<<"title">> := Title}} = _Req) ->
-    %% Use the decoded JSON body
-    {json, #{created => Title}}.
-```
-
-If the content type is `application/json` but the body is empty or malformed, the plugin returns a 400 response and the controller is never called.
-
-`decode_json_body` is skipped for GET and DELETE requests since they typically have no body.
-
-### read_urlencoded_body
-
-When enabled, requests with `Content-Type: application/x-www-form-urlencoded` have their body parsed into a map under the `params` key:
-
-```erlang
-{pre_request, nova_request_plugin, #{read_urlencoded_body => true}}
-```
-
-```erlang
-login(#{params := #{<<"username">> := User, <<"password">> := Pass}} = _Req) ->
-    %% Use the decoded form params
-    ...
-```
-
-### parse_qs
-
-Parses the URL query string (e.g. `?page=2&limit=10`). The value controls the format:
-
-- `true` — returns a map in the `parsed_qs` key
-- `list` — returns a proplist of `{Key, Value}` tuples
-
-```erlang
-{pre_request, nova_request_plugin, #{parse_qs => true}}
-```
-
-```erlang
-index(#{parsed_qs := #{<<"page">> := Page}} = _Req) ->
-    %% Use query params
-    ...
-```
-
-### Combining options
-
-You can enable all three at once:
-
-```erlang
-{pre_request, nova_request_plugin, #{
-    decode_json_body => true,
-    read_urlencoded_body => true,
-    parse_qs => true
-}}
-```
-
-## nova_correlation_plugin
-
-This plugin assigns a unique correlation ID to every request — essential for tracing requests across services in your logs.
-
-```erlang
-{pre_request, nova_correlation_plugin, #{
-    request_correlation_header => <<"x-correlation-id">>,
-    logger_metadata_key => correlation_id
-}}
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `request_correlation_header` | *(none — always generates)* | Header to read an existing correlation ID from. Cowboy lowercases all header names. |
-| `logger_metadata_key` | `<<"correlation-id">>` | Key set in OTP logger process metadata |
-
-The plugin:
-
-1. Reads the correlation ID from the configured header, or generates a v4 UUID if missing
-2. Sets the ID in OTP logger metadata (so all log messages for this request include it)
-3. Adds an `x-correlation-id` response header
-4. Stores the ID in the request map as `correlation_id`
-
-Access it in your controller:
-
-```erlang
-show(#{correlation_id := CorrId} = _Req) ->
-    logger:info("Handling request ~s", [CorrId]),
-    ...
-```
-
-## nova_csrf_plugin
-
-This plugin provides CSRF protection using the synchronizer token pattern. It generates a random token per session and validates it on state-changing requests.
-
-```erlang
-{pre_request, nova_csrf_plugin, #{}}
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `field_name` | `<<"_csrf_token">>` | Form field name to check |
-| `header_name` | `<<"x-csrf-token">>` | Header name to check (for AJAX) |
-| `session_key` | `<<"_csrf_token">>` | Key used to store the token in the session |
-| `excluded_paths` | `[]` | List of path prefixes to skip protection for |
-
-### How it works
-
-- **Safe methods** (GET, HEAD, OPTIONS): The plugin ensures a CSRF token exists in the session and injects it into the request map as `csrf_token`.
-- **Unsafe methods** (POST, PUT, PATCH, DELETE): The plugin reads the submitted token from the form field or header and validates it against the session token. If the token is missing or doesn't match, the request is rejected with a 403 response.
-
-### Template integration
-
-In your ErlyDTL templates, include the token in forms as a hidden field:
-
-```html
-<form method="post" action="/login">
-    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}" />
-    <!-- rest of form -->
-    <button type="submit">Log in</button>
-</form>
-```
-
-The `csrf_token` variable is available because the plugin adds it to the request map, and Nova passes request map values to templates as template variables.
-
-For AJAX requests, send the token in a header instead:
-
-```javascript
-fetch('/api/resource', {
-    method: 'POST',
-    headers: {
-        'X-CSRF-Token': csrfToken,
-        'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(data)
-});
-```
-
-### Excluding API paths
-
-If you have API routes that use a different authentication scheme (e.g. bearer tokens), exclude them from CSRF checks:
-
-```erlang
-{pre_request, nova_csrf_plugin, #{
-    excluded_paths => [<<"/api/">>]
-}}
-```
-
-```admonish warning
-`nova_request_plugin` must run **before** `nova_csrf_plugin` so that form params are parsed into the `params` key. Plugin order matters — list `nova_request_plugin` first.
-```
-
-## Setting up for our login form
-
-In the next chapter we will build a login form that sends URL-encoded data. To have Nova decode this automatically, update the plugin config in `dev_sys.config.src`:
+Global plugins are listed in the `nova` section of the sys.config. The companion app's `dev_sys.config.src`:
 
 ```erlang
 {plugins, [
-    {pre_request, nova_request_plugin, #{read_urlencoded_body => true}}
+    {pre_request, nova_request_plugin, #{decode_json_body => true,
+                                         read_urlencoded_body => true}}
 ]}
 ```
 
-With this setting, form POST data is decoded and placed in the `params` key of the request map, ready for your controller to use.
+Each entry is `{Phase, Module, Options}`, with `Phase` either `pre_request` or `post_request`. These apply to every route group that does not declare its own `plugins`. ([Custom Plugins & CORS](../production/plugins-cors.md) later wraps this list in a request logger.)
 
-```admonish tip
-You can enable multiple decoders at once. We will add `decode_json_body => true` later when we build our [JSON API](../building-api/json-api.md).
+## nova_request_plugin
+
+The request plugin reads the body and decodes it into the request map:
+
+| Option | Request map key | Effect |
+|---|---|---|
+| `decode_json_body => true` | `json` | Decodes `application/json` bodies |
+| `read_urlencoded_body => true` | `params` | Parses `application/x-www-form-urlencoded` bodies into a map |
+| `parse_qs => true` | `parsed_qs` | Parses the query string into a map |
+| `parse_qs => list` | `parsed_qs` | Same, as a list of `{Key, Value}` |
+
+Keys and values are binaries in all three. A few details matter in practice:
+
+- JSON decoding is skipped for `GET` and `DELETE`.
+- A request that says `content-type: application/json` but has an empty or malformed body is answered with `400` and an empty body; the controller never runs.
+- `multipart/form-data` bodies are never buffered here. That is the multipart plugin's job, below.
+- A body that matches none of the enabled decoders is still read (into `body`) but not decoded, so a clause matching `#{json := ...}` simply does not match.
+
+```shell
+curl -i -X POST localhost:8080/hello -H 'content-type: application/json' -d '{"name":'
 ```
+
+```
+HTTP/1.1 400 Bad Request
+...
+content-length: 0
+...
+```
+
+The `/hello` group enables all three options, so `greet/1` can read `?shout=true`:
+
+```shell
+curl 'localhost:8080/hello/nova?shout=true'
+```
+
+```
+{"greeting":"HELLO, NOVA!"}
+```
+
+```erlang
+greeting(Name, #{~"shout" := ~"true"}) ->
+    string:uppercase(greeting(Name, #{}));
+greeting(Name, _Query) ->
+    <<"Hello, ", Name/binary, "!">>.
+```
+
+### Choosing the JSON library
+
+Nova encodes and decodes JSON through the module named by `json_lib`, which defaults to `thoas`. Nova looks the setting up in the environment of your *bootstrap application* (`blog`), not of `nova`, and it expects `encode/1` plus a `decode/1` that returns `{ok, Term}` or an error.
+
+OTP's own `json` module (OTP 27+) encodes fine, but `json:decode/1` returns the term itself and raises on bad input, so it cannot be plugged in directly. The blog uses a small adapter:
+
+```erlang
+-module(blog_json).
+
+-export([encode/1, decode/1]).
+
+encode(Term) ->
+    json:encode(Term).
+
+decode(Binary) ->
+    try
+        {ok, json:decode(Binary)}
+    catch
+        error:Reason -> {error, Reason}
+    end.
+```
+
+and selects it in each sys.config:
+
+```erlang
+{blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}]},
+```
+
+From now on every `{json, ...}` response, every decoded body and Nova's own error pages go through OTP `json`. The output is the same as with `thoas` for the maps in this book, and in your own code you use `json:encode/1` and `json:decode/1` directly.
+
+## nova_correlation_plugin
+
+Tags every request with a correlation ID so that log lines from one request (and from the services it calls) can be tied together:
+
+```erlang
+{pre_request, nova_correlation_plugin, #{
+    request_correlation_header => ~"x-correlation-id",
+    logger_metadata_key => correlation_id
+}},
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `request_correlation_header` | none | Reuse an incoming ID from this header |
+| `logger_metadata_key` | `~"correlation-id"` | Logger metadata key for the ID |
+
+The plugin takes the ID from the header, or generates a UUID v4, then puts it in the request map as `correlation_id`, in the process's logger metadata, and in an `x-correlation-id` response header:
+
+```shell
+curl -i -H 'x-correlation-id: abc-123' localhost:8080/hello/nova
+```
+
+```
+HTTP/1.1 200 OK
+...
+x-correlation-id: abc-123
+...
+
+{"greeting":"Hello, nova!"}
+```
+
+Since the ID is in the logger metadata, the `?LOG_INFO(#{msg => ~"greeting", name => Name})` in `greet/1` carries it without the controller doing anything. Whether you see it depends on the formatter: the dev config's flatlog template prints only the message and location, while a formatter that includes metadata, such as Nova's `nova_jsonlogger`, prints it with every line.
+
+```admonish note
+Only accept a client-supplied correlation ID from callers you trust (your own front end or other services). The plugin does not validate the header's contents.
+```
+
+## nova_cors_plugin
+
+Adds CORS headers so browsers on other origins may call the route, and answers preflight `OPTIONS` requests itself:
+
+```erlang
+{pre_request, nova_cors_plugin, #{allow_origins => ~"*"}},
+```
+
+`allow_origins` is required and becomes the `Access-Control-Allow-Origin` value. The plugin also sends `Access-Control-Allow-Headers: *` and `Access-Control-Allow-Methods: *`, on every request in the group. The greeting is public read-only data, so `*` is fine there; for anything with cookies or credentials name the exact origin.
+
+The router only lets a request reach the plugins if the route accepts its method, which is why `/hello/:name` lists `options` next to `get`:
+
+```shell
+curl -i -X OPTIONS -H 'origin: https://example.com' localhost:8080/hello/nova
+```
+
+```
+HTTP/1.1 200 OK
+Access-Control-Allow-Headers: *
+Access-Control-Allow-Methods: *
+Access-Control-Allow-Origin: *
+content-length: 0
+...
+```
+
+The plugin stops on `OPTIONS`, so `greet/1` never sees the preflight. [Custom Plugins & CORS](../production/plugins-cors.md) builds a stricter variant.
 
 ## Per-route plugins
 
-So far we've configured plugins globally in `sys.config`. You can also set plugins per route group by adding a `plugins` key to the group map in your router:
+A route group with a `plugins` key uses exactly that list instead of the global one. The `/hello` group needs the query string and CORS, so it brings its own:
 
 ```erlang
-routes(_Environment) ->
-  [
-    #{prefix => "/api",
-      plugins => [
-          {pre_request, nova_request_plugin, #{decode_json_body => true}}
-      ],
-      routes => [
-          {"/posts", fun blog_posts_controller:list/1, #{methods => [get]}}
-      ]
-    },
-    #{prefix => "",
-      plugins => [
-          {pre_request, nova_request_plugin, #{read_urlencoded_body => true}}
-      ],
-      routes => [
-          {"/login", fun blog_main_controller:login/1, #{methods => [get, post]}}
-      ]
-    }
-  ].
-```
-
-When `plugins` is set on a route group, it **overrides** the global plugin configuration for those routes. This lets you use JSON decoding for API routes and form decoding for HTML routes without conflict.
-
-See [Custom Plugins and CORS](../production/plugins-cors.md) for more examples, including per-route CORS.
-
-## Built-in plugins summary
-
-| Plugin | Phase | Purpose | Key request map additions |
-|---|---|---|---|
-| `nova_request_plugin` | pre_request | Decodes JSON/form bodies, parses query strings | `json`, `params`, `parsed_qs` |
-| `nova_correlation_plugin` | pre_request | Assigns correlation IDs for request tracing | `correlation_id` |
-| `nova_csrf_plugin` | pre_request | CSRF protection via synchronizer token | `csrf_token` |
-| `nova_cors_plugin` | pre_request | Adds CORS headers, handles preflight requests | *(headers only)* |
-
-A realistic configuration using multiple plugins:
-
-```erlang
-{nova, [
-    {plugins, [
+#{
+    prefix => "/hello",
+    security => false,
+    plugins => [
         {pre_request, nova_correlation_plugin, #{
-            request_correlation_header => <<"x-correlation-id">>,
+            request_correlation_header => ~"x-correlation-id",
             logger_metadata_key => correlation_id
         }},
+        {pre_request, nova_cors_plugin, #{allow_origins => ~"*"}},
         {pre_request, nova_request_plugin, #{
             decode_json_body => true,
             read_urlencoded_body => true,
             parse_qs => true
-        }},
-        {pre_request, nova_csrf_plugin, #{
-            excluded_paths => [<<"/api/">>]
         }}
-    ]}
-]}
+    ],
+    routes => [
+        {"/", fun blog_hello_controller:create/1, #{methods => [post]}},
+        {"/:name", fun blog_hello_controller:greet/1, #{methods => [get, options]}}
+    ]
+},
 ```
 
-Ordering matters: `nova_correlation_plugin` runs first so all subsequent log messages include the correlation ID. `nova_request_plugin` runs before `nova_csrf_plugin` so form params are available for token validation.
+Because the list *replaces* the global plugins, it repeats `nova_request_plugin`; leave it out and the group's controllers get no `json` or `params`. Order matters within the list: the correlation ID is set first so that everything after it logs with the ID, and CORS answers preflights before any body is read.
+
+`rebar3 nova middleware` prints the effective plugin chain of every group:
+
+```shell
+rebar3 nova middleware
+```
+
+```
+=== Global Plugins ===
+  pre_request: nova_request_plugin #{decode_json_body => true,
+                                     read_urlencoded_body => true}
+
+=== Route Groups (blog_router) ===
+
+  Group: prefix=/  security=false
+  Plugins:
+    (inherits global)
+    pre_request: nova_request_plugin #{decode_json_body => true,
+                                       read_urlencoded_body => true}
+  Routes:
+    GET / -> blog_main_controller:index
+    GET /heartbeat -> blog_router:-routes/1-fun-0-
+...
+  Group: prefix=/hello  security=false
+  Plugins:
+    pre_request: nova_correlation_plugin #{request_correlation_header =>
+                                               <<"x-correlation-id">>,
+                                           logger_metadata_key =>
+                                               correlation_id}
+    pre_request: nova_cors_plugin #{allow_origins => <<"*">>}
+    pre_request: nova_request_plugin #{decode_json_body => true,
+                                       read_urlencoded_body => true,
+                                       parse_qs => true}
+  Routes:
+    POST / -> blog_hello_controller:create
+    GET,OPTIONS /:name -> blog_hello_controller:greet
+...
+```
+
+```admonish bug
+In rebar3_nova 0.13 `middleware` crashes with a `function_clause` when it reaches a static file route or a status-code route. The blog keeps those in its last route group, so every group with plugins is printed before the crash.
+```
+
+## CSRF protection
+
+A form that changes state must prove it was served by your site, or another site can make your visitors' browsers submit it for them. `nova_csrf_plugin` implements the synchronizer token pattern: a random token is stored in the visitor's session and must come back with every `POST`, `PUT`, `PATCH` and `DELETE`.
+
+| Option | Default | Description |
+|---|---|---|
+| `field_name` | `~"_csrf_token"` | Form field carrying the token |
+| `header_name` | `~"x-csrf-token"` | Header carrying the token (for `fetch` calls) |
+| `session_key` | `~"_csrf_token"` | Session key the token is stored under |
+| `excluded_paths` | `[]` | Path prefixes to skip, such as `[~"/api/"]` |
+
+On safe methods the plugin makes sure the session has a token and puts it in the request map as `csrf_token`. Nova passes it to every template automatically, so a form only has to include it:
+
+```html
+<form method="post" action="/contact" enctype="multipart/form-data">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+  <label>Name <input name="name" value="{{ name }}"></label>
+  <label>Message <textarea name="message">{{ message }}</textarea></label>
+  <label>Attachment <input type="file" name="attachment"></label>
+  <button type="submit">Send</button>
+</form>
+```
+
+On unsafe methods it compares the submitted token with the session's in constant time and answers `403` if they differ. The session itself is the `session_id` cookie Nova hands every new visitor (you saw it in every response so far), so the plugin works without any setup; [Sessions](../auth-sessions/sessions.md) explains the session layer.
+
+The blog's contact page is the first form. Its group:
+
+```erlang
+#{
+    prefix => "/contact",
+    security => false,
+    plugins => [
+        {pre_request, nova_multipart_plugin, #{
+            handler => {nova_multipart_memory_handler, #{}},
+            max_parts => 8,
+            max_part_size => 1000000
+        }},
+        {pre_request, nova_csrf_plugin, #{}}
+    ],
+    routes => [
+        {"/", fun blog_contact_controller:show/1, #{methods => [get]}},
+        {"/", fun blog_contact_controller:submit/1, #{methods => [post]}}
+    ]
+},
+```
+
+The CSRF plugin reads the token from `params`, so whatever parses the form must run **before** it: here the multipart plugin, for a `urlencoded` form `nova_request_plugin` with `read_urlencoded_body`.
+
+The controller only deals with valid submissions:
+
+```erlang
+-module(blog_contact_controller).
+
+-export([
+    show/1,
+    submit/1
+]).
+
+show(_Req) ->
+    {ok, [], #{view => blog_contact}}.
+
+submit(#{params := Params, files := Files}) ->
+    Name = string:trim(maps:get(~"name", Params, ~"")),
+    Message = string:trim(maps:get(~"message", Params, ~"")),
+    case Name =:= ~"" orelse Message =:= ~"" of
+        true ->
+            Vars = [
+                {error, ~"Please fill in your name and a message."},
+                {name, Name},
+                {message, Message}
+            ],
+            {ok, Vars, #{view => blog_contact, status_code => 422}};
+        false ->
+            {ok, [{name, Name}, {attachments, attachments(Files)}], #{view => blog_contact_thanks}}
+    end.
+
+attachments(Files) ->
+    [
+        #{filename => Filename, size => byte_size(Body)}
+     || #{filename := Filename, result := #{body := Body}} <- Files
+    ].
+```
+
+Try it with curl, keeping the session cookie in a jar. Without the token:
+
+```shell
+curl -s -c jar.txt localhost:8080/contact > /dev/null
+curl -i -b jar.txt -F name=Ada -F message=Hi localhost:8080/contact
+```
+
+```
+HTTP/1.1 403 Forbidden
+content-length: 30
+content-type: text/plain
+date: Tue, 03 Nov 2026 07:25:32 GMT
+server: Cowboy/Nova
+vary: accept-encoding
+
+Forbidden - CSRF token invalid
+```
+
+With the token from the form:
+
+```shell
+TOKEN=$(curl -s -b jar.txt localhost:8080/contact | sed -n 's/.*name="_csrf_token" value="\([^"]*\)".*/\1/p')
+curl -s -b jar.txt -F "_csrf_token=$TOKEN" -F name=Ada -F 'message=Hello there' \
+     -F attachment=@notes.txt localhost:8080/contact
+```
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Thanks</title>
+</head>
+<body>
+  <h1>Thanks, Ada!</h1>
+  
+  <p>Received notes.txt (6 bytes).</p>
+  
+</body>
+</html>
+```
+
+ErlyDTL escapes variables, so a name like `<script>` is rendered as `&lt;script&gt;`; the companion app's tests check that.
+
+```admonish warning
+Use `excluded_paths` only for routes that authenticate in a way browsers do not send automatically (an `Authorization: Bearer` header, for example). Anything authenticated by a cookie needs CSRF protection.
+```
+
+## File uploads
+
+`nova_multipart_plugin` (new in Nova 0.18) reads `multipart/form-data` bodies. Ordinary fields go into `params`. Each file part is streamed, chunk by chunk, to a **handler** module, and the request gets a `files` list of `#{name, filename, content_type, result}` maps. On requests that are not multipart it sets `params => #{}` (unless an earlier plugin set it) and `files => []`, so a controller can always match both keys.
+
+`handler` is required and is a `{Module, InitArgs}` pair implementing `nova_multipart_handler`. Nova ships two:
+
+| Handler | `result` | Use for |
+|---|---|---|
+| `nova_multipart_memory_handler` | `#{body => Binary}` | Small attachments |
+| `nova_multipart_file_handler` | `#{path => Path}` | Larger files, written to `InitArgs`'s `dir` under a random name |
+
+The file handler never uses the client's filename in the path and only keeps extensions you allow (`extensions => [~"png", ~"jpg"]`). Treat `filename` and `content_type` as untrusted input: they are whatever the client sent.
+
+The limits answer early instead of buffering an attacker's body:
+
+| Option | Default | Exceeded |
+|---|---|---|
+| `max_parts` | 32 | 413 |
+| `max_part_size` | 8 000 000 bytes | 413 |
+| `max_field_size` | 65 536 bytes | 413 |
+| `max_total_size` | 64 000 000 bytes | 413 |
+| `read_timeout` | 60 000 ms | 408 |
+
+The contact form caps attachments at 1 MB, so a larger one is refused with `413` before the controller runs.
+
+```admonish note
+In Nova 0.18.1 the part counter trips one part early: with `max_parts => 4` a form of exactly four parts is rejected. Leave some headroom.
+```
+
+## Built-in plugins
+
+| Plugin | Purpose | Adds to the request map |
+|---|---|---|
+| `nova_request_plugin` | Reads and decodes JSON and form bodies, parses query strings | `body`, `json`, `params`, `parsed_qs` |
+| `nova_correlation_plugin` | Correlation ID in logs and response header | `correlation_id` |
+| `nova_cors_plugin` | CORS headers, answers preflights | |
+| `nova_csrf_plugin` | Synchronizer-token CSRF protection | `csrf_token` |
+| `nova_multipart_plugin` | Streams multipart uploads to a handler | `params`, `files` |
 
 ---
 
-With plugins configured to decode form data, let's set up our [database layer](../data-layer/setup.md).
+With routing, controllers and plugins in place, the blog is ready for real data. Next we set up the [database layer](../data-layer/setup.md).

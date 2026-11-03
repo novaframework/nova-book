@@ -1,189 +1,385 @@
 # Sending Email
 
-[Hikyaku](https://github.com/Taure/hikyaku) is a composable email library for Erlang with pluggable adapters. It handles building and delivering emails without tying you to a specific provider.
+A blog sends mail: a note to an author when someone comments, a confirmation link after registration, a password reset. [Hikyaku](https://hex.pm/packages/hikyaku) (飛脚, the runners who carried letters in Edo Japan) is the email library of the Nova ecosystem. It has three parts:
+
+- **a builder** (`hikyaku_email`, `hikyaku_attachment`) that produces an email record,
+- **a mailer behaviour** (`hikyaku_mailer`) for your own mailer module, which knows how to deliver,
+- **adapters** that do the delivery: SMTP, three HTTP providers, a logger for development and a test adapter.
+
+This chapter builds and delivers email. The next one wires mail into the blog's flows and sends it from background jobs instead of from the request.
 
 ## Adding Hikyaku
 
-Add the dependency to `rebar.config`:
+The blog already depends on it in `rebar.config`:
 
 ```erlang
 {deps, [
-    nova,
-    {kura, "~> 1.0"},
-    {hikyaku, "~> 0.1"}
+    ...
+    {hikyaku, "~> 0.2"},
+    ...
 ]}.
 ```
 
-Add `hikyaku` to your application dependencies in `src/blog.app.src`:
+and starts it with the application, in `src/blog.app.src`:
 
 ```erlang
-{applications,
- [kernel,
-  stdlib,
-  nova,
-  kura,
-  hikyaku
- ]},
+{applications, [
+    kernel,
+    stdlib,
+    nova,
+    kura,
+    kura_postgres,
+    nova_auth,
+    nova_json_schemas,
+    arizona_nova,
+    shigoto,
+    hikyaku
+]},
 ```
 
-## Creating a mailer
+(`shigoto` is the job queue from the next chapter and Part IX.)
 
-Hikyaku uses a behaviour-based pattern. Define a mailer module that configures the delivery adapter:
+```admonish note title="Hex has 0.2.0"
+The Hex release is hikyaku 0.2.0; GitHub is ahead. Everything in this chapter is checked against the 0.2.0 source in `_build/default/lib/hikyaku`. Where 0.2.0 has a problem that is fixed upstream, the chapter says so.
+```
+
+## A mailer module
+
+A mailer is a module with the `hikyaku_mailer` behaviour. Its one callback, `config/0`, returns a map with the adapter and that adapter's settings. `hikyaku_mailer:deliver(Mailer, Email)` validates the email, calls `config/0` and hands the email to the adapter.
+
+`src/mail/blog_mailer.erl`:
 
 ```erlang
 -module(blog_mailer).
 -behaviour(hikyaku_mailer).
--export([config/0]).
+
+-export([config/0, deliver/1, deliver_from_job/1]).
 
 config() ->
-    #{adapter => hikyaku_adapter_logger}.
+    application:get_env(blog, mailer, #{adapter => hikyaku_adapter_logger}).
+
+deliver(Email) ->
+    hikyaku_mailer:deliver(?MODULE, Email).
 ```
 
-The `hikyaku_adapter_logger` prints emails to the console — perfect for development. We'll switch to a real adapter for production.
+(`deliver_from_job/1` comes in the next chapter.)
 
-### Available adapters
+`config/0` reads the blog's application environment, so every environment can choose its own adapter without code changes. The development config logs mail instead of sending it, in `config/dev_sys.config.src`:
 
-| Adapter | Service | Config keys |
-|---|---|---|
-| `hikyaku_adapter_smtp` | Any SMTP server | `relay`, `port`, `username`, `password`, `tls` |
-| `hikyaku_adapter_sendgrid` | SendGrid v3 API | `api_key` |
-| `hikyaku_adapter_mailgun` | Mailgun | `api_key`, `domain` |
-| `hikyaku_adapter_ses` | Amazon SES v2 | `access_key`, `secret_key`, `region` |
-| `hikyaku_adapter_logger` | Console output | `level` |
-| `hikyaku_adapter_test` | Test assertions | `pid` |
+```erlang
+{blog, [
+    {json_lib, blog_json},
+    {ops_token, ~"dev-ops-token"},
+    {mailer, #{adapter => hikyaku_adapter_logger, level => notice}},
+    {mail_from, {~"Nova Blog", ~"noreply@blog.test"}}
+]},
+```
+
+and the test config uses the test adapter (`config/test_sys.config`):
+
+```erlang
+{blog, [
+    {json_lib, blog_json},
+    {ops_token, ~"test-ops-token"},
+    {mailer, #{adapter => hikyaku_adapter_test}}
+]},
+```
+
+`config/0` is called on every delivery, so a test can point the mailer somewhere else with `application:set_env/3` and the next email goes there.
 
 ## Building an email
 
-Hikyaku uses a builder API — each function takes an email record and returns a new one:
+Every builder function takes an email and returns a new one:
 
 ```erlang
-E0 = hikyaku_email:new(),
-E1 = hikyaku_email:from(E0, {<<"Blog">>, <<"noreply@myblog.com">>}),
-E2 = hikyaku_email:to(E1, {<<"Alice">>, <<"alice@example.com">>}),
-E3 = hikyaku_email:subject(E2, <<"Welcome to the Blog!">>),
-E4 = hikyaku_email:text_body(E3, <<"Thanks for signing up, Alice.">>),
-E5 = hikyaku_email:html_body(E4, <<"<h1>Welcome!</h1><p>Thanks for signing up.</p>">>),
-
-{ok, _} = hikyaku_mailer:deliver(blog_mailer, E5).
+1> E0 = hikyaku_email:new().
+2> E1 = hikyaku_email:from(E0, {~"Nova Blog", ~"noreply@blog.test"}).
+3> E2 = hikyaku_email:to(E1, ~"alice@example.com").
+4> E3 = hikyaku_email:subject(E2, ~"Welcome!").
+5> E4 = hikyaku_email:text_body(E3, ~"Thanks for joining the blog.").
+6> blog_mailer:deliver(E4).
+=NOTICE REPORT==== 3-Nov-2026::09:53:46.066628 ===
+    msg: <<"hikyaku_email_delivered">>
+    from: <<"Nova Blog <noreply@blog.test>">>
+    to: [<<"alice@example.com">>]
+    cc: []
+    bcc: []
+    subject: <<"Welcome!">>
+    text_body: <<"Thanks for joining the blog.">>
+    html_body: undefined
+{ok,#{status => logged}}
 ```
 
-### Builder functions
+That is a `rebar3 shell` session (output of steps 1 to 5 trimmed). The logger adapter printed the email and returned `{ok, #{status => logged}}`.
 
 | Function | Purpose |
 |---|---|
-| `hikyaku_email:new/0` | Create a new email |
-| `hikyaku_email:from/2` | Set the sender (`{Name, Address}` or `Address`) |
-| `hikyaku_email:to/2` | Add a recipient |
-| `hikyaku_email:cc/2` | Add a CC recipient |
-| `hikyaku_email:bcc/2` | Add a BCC recipient |
-| `hikyaku_email:reply_to/2` | Set the reply-to address |
-| `hikyaku_email:subject/2` | Set the subject line |
-| `hikyaku_email:text_body/2` | Set the plain text body |
-| `hikyaku_email:html_body/2` | Set the HTML body |
-| `hikyaku_email:header/3` | Add a custom header |
-| `hikyaku_email:attachment/2` | Add an attachment |
+| `hikyaku_email:new/0` | An empty email |
+| `from/2`, `reply_to/2` | Set the sender or the reply-to address |
+| `to/2`, `cc/2`, `bcc/2` | Append one recipient |
+| `put_to/2`, `put_cc/2`, `put_bcc/2` | Replace the whole list |
+| `subject/2` | Set the subject |
+| `text_body/2`, `html_body/2` | Set the plain text or HTML body |
+| `attachment/2` | Append a `hikyaku_attachment` |
+| `header/3` | Add a custom header (`Key` and `Value` are binaries) |
+| `provider_option/3` | Store an adapter-specific option (atom key) |
 
-## Creating email helper functions
+An address is a binary (`~"alice@example.com"`), a `{Name, Address}` tuple, or a `#hikyaku_address{}` record. All three are normalised to the record.
 
-Organize your emails in a dedicated module:
+### Reading an email
+
+The email is a record, `#hikyaku_email{}`, defined in `hikyaku/include/hikyaku.hrl`. Hikyaku has no getter functions; include the header and match:
+
+```erlang
+8> rr(hikyaku_email).
+[hikyaku_address,hikyaku_attachment,hikyaku_email]
+9> E4.
+#hikyaku_email{subject = <<"Welcome!">>,
+               from = #hikyaku_address{name = <<"Nova Blog">>,
+                                       address = <<"noreply@blog.test">>},
+               to = [#hikyaku_address{name = undefined,
+                                      address = <<"alice@example.com">>}],
+               cc = [],bcc = [],reply_to = undefined,
+               text_body = <<"Thanks for joining the blog.">>,
+               html_body = undefined,attachments = [],headers = #{},
+               provider_options = #{}}
+```
+
+In a module, `-include_lib("hikyaku/include/hikyaku.hrl").` gives you the same records. The tests later in this part match on them.
+
+### Validation
+
+`hikyaku_mailer:deliver/2` refuses an email without a sender or without any recipient, before the adapter is called:
+
+```erlang
+7> blog_mailer:deliver(hikyaku_email:to(hikyaku_email:new(), ~"alice@example.com")).
+{error,{validation,<<"from is required">>}}
+```
+
+From `test/blog_email_SUITE.erl`:
+
+```erlang
+mailer_requires_sender_and_recipient(_Config) ->
+    NoSender = hikyaku_email:to(hikyaku_email:new(), ~"alice@example.com"),
+    {error, {validation, ~"from is required"}} = blog_mailer:deliver(NoSender),
+    NoRecipient = hikyaku_email:from(hikyaku_email:new(), ~"noreply@blog.test"),
+    {error, {validation, ~"at least one recipient (to, cc, or bcc) is required"}} =
+        blog_mailer:deliver(NoRecipient).
+```
+
+## Bodies from templates
+
+Email bodies hold user content: a comment, a post title, a username. In HTML that content must be escaped, or a comment containing `<script>` ends up in the author's inbox as markup. The blog already has a template engine that escapes by default: ErlyDTL, from [Part IV](../views-templates/templates.md). Email templates live next to the page templates in `src/views/` and compile to modules the same way (`blog_email_comment_html.dtl` becomes `blog_email_comment_html_dtl`).
+
+`src/views/blog_email_comment_html.dtl`:
+
+```html
+<p>Hi {{ author }},</p>
+<p><strong>{{ commenter }}</strong> left a comment on your post <em>{{ title }}</em>:</p>
+<blockquote>{{ comment }}</blockquote>
+<p><a href="{{ url }}">Read the discussion</a></p>
+```
+
+The plain text version must not be HTML-escaped (an `&` in a title should stay an `&`), so it turns autoescaping off. `src/views/blog_email_comment_txt.dtl`:
+
+```
+{% autoescape off %}Hi {{ author }},
+
+{{ commenter }} left a comment on your post "{{ title }}":
+
+{{ comment }}
+
+Read the discussion: {{ url }}
+{% endautoescape %}
+```
+
+The functions that build the blog's emails live in one module, `src/mail/blog_emails.erl`. They only build; they never deliver, which keeps them easy to test:
 
 ```erlang
 -module(blog_emails).
--export([welcome/1, comment_notification/2]).
 
-welcome(#{email := Email, username := Username}) ->
+-export([comment_notification/1, posts_export/2]).
+
+comment_notification(#{post := Post, author := Commenter, body := Body}) ->
+    #{title := Title, author := #{email := To, username := AuthorName}} = Post,
+    #{username := CommenterName} = Commenter,
+    Vars = #{
+        author => AuthorName,
+        commenter => CommenterName,
+        title => Title,
+        comment => Body,
+        url => post_url(Post)
+    },
+    Email = new(To, <<CommenterName/binary, " commented on \"", Title/binary, "\"">>),
+    with_bodies(Email, blog_email_comment_txt_dtl, blog_email_comment_html_dtl, Vars).
+
+posts_export(#{email := To, username := Username}, Csv) ->
+    E0 = new(To, ~"Your posts export"),
+    E1 = hikyaku_email:text_body(
+        E0, <<"Hi ", Username/binary, ",\r\n\r\nYour posts are attached as a CSV file.\r\n">>
+    ),
+    hikyaku_email:attachment(E1, hikyaku_attachment:from_data(~"posts.csv", Csv)).
+
+new(To, Subject) ->
     E0 = hikyaku_email:new(),
-    E1 = hikyaku_email:from(E0, {<<"Nova Blog">>, <<"noreply@myblog.com">>}),
-    E2 = hikyaku_email:to(E1, Email),
-    E3 = hikyaku_email:subject(E2, <<"Welcome to Nova Blog!">>),
-    E4 = hikyaku_email:text_body(E3,
-        <<"Hi ", Username/binary, ",\n\n",
-          "Thanks for joining Nova Blog.\n\n",
-          "— The Blog Team">>),
-    E5 = hikyaku_email:html_body(E4,
-        <<"<h1>Welcome, ", Username/binary, "!</h1>",
-          "<p>Thanks for joining Nova Blog.</p>">>),
-    hikyaku_mailer:deliver(blog_mailer, E5).
+    E1 = hikyaku_email:from(E0, application:get_env(blog, mail_from, ~"noreply@blog.test")),
+    E2 = hikyaku_email:to(E1, To),
+    hikyaku_email:subject(E2, Subject).
 
-comment_notification(Post, Comment) ->
-    AuthorEmail = maps:get(email, maps:get(author, Post)),
-    CommentAuthor = maps:get(username, maps:get(author, Comment)),
-    PostTitle = maps:get(title, Post),
+with_bodies(Email, TextTemplate, HtmlTemplate, Vars) ->
+    E1 = hikyaku_email:text_body(Email, render(TextTemplate, Vars)),
+    hikyaku_email:html_body(E1, render(HtmlTemplate, Vars)).
 
-    E0 = hikyaku_email:new(),
-    E1 = hikyaku_email:from(E0, {<<"Nova Blog">>, <<"noreply@myblog.com">>}),
-    E2 = hikyaku_email:to(E1, AuthorEmail),
-    E3 = hikyaku_email:subject(E2,
-        <<CommentAuthor/binary, " commented on \"", PostTitle/binary, "\"">>),
-    E4 = hikyaku_email:text_body(E3,
-        <<CommentAuthor/binary, " left a comment on your post \"",
-          PostTitle/binary, "\":\n\n",
-          (maps:get(body, Comment))/binary>>),
-    hikyaku_mailer:deliver(blog_mailer, E4).
+render(Template, Vars) ->
+    {ok, IoData} = Template:render(Vars),
+    iolist_to_binary(IoData).
+
+post_url(#{id := Id}) ->
+    BaseUrl = application:get_env(blog, base_url, ~"http://localhost:8080"),
+    <<BaseUrl/binary, "/api/posts/", (integer_to_binary(Id))/binary>>.
 ```
+
+`comment_notification/1` takes a comment with its author and its post (and the post's author) preloaded, the shape `blog_repo:preload(blog_comment, Comment, [author, {post, [author]}])` returns. The sender comes from the `mail_from` setting, the link base from `base_url`.
+
+The test feeds it a hostile comment and checks both bodies, from `test/blog_email_SUITE.erl`:
+
+```erlang
+comment_email_escapes_html(_Config) ->
+    Alice = blog_data_fixtures:user(~"alice"),
+    Bob = blog_data_fixtures:user(~"bob"),
+    Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Tom & Jerry"}),
+    {ok, Comment} = blog_posts:add_comment(Post, Bob, #{~"body" => ~"<script>alert(1)</script>"}),
+    Loaded = blog_repo:preload(blog_comment, Comment, [author, {post, [author]}]),
+    #hikyaku_email{subject = Subject, text_body = Text, html_body = Html} =
+        blog_emails:comment_notification(Loaded),
+    ~"bob commented on \"Tom & Jerry\"" = Subject,
+    {_, _} = binary:match(Text, ~"<script>alert(1)</script>"),
+    {_, _} = binary:match(Html, ~"&lt;script&gt;alert(1)&lt;/script&gt;"),
+    {_, _} = binary:match(Html, ~"<em>Tom &amp; Jerry</em>"),
+    nomatch = binary:match(Html, ~"<script>").
+```
+
+The subject is built by hand rather than from a template: it is a header, never rendered as HTML. A title containing a line break cannot start a new header over SMTP either; gen_smtp encodes it (`Subject: =?UTF-8?Q?Hi=0D=0ABcc=3A_...?=`).
 
 ## Attachments
 
-```erlang
-Attachment = hikyaku_attachment:from_data(CsvData, <<"export.csv">>),
-E0 = hikyaku_email:new(),
-E1 = hikyaku_email:from(E0, <<"noreply@myblog.com">>),
-E2 = hikyaku_email:to(E1, <<"alice@example.com">>),
-E3 = hikyaku_email:subject(E2, <<"Your export is ready">>),
-E4 = hikyaku_email:text_body(E3, <<"See attached.">>),
-E5 = hikyaku_email:attachment(E4, Attachment),
+`hikyaku_attachment` builds attachments:
 
-{ok, _} = hikyaku_mailer:deliver(blog_mailer, E5).
+| Function | Result |
+|---|---|
+| `from_data(Filename, Data)` | An attachment from a binary, content type guessed from the extension |
+| `from_data(Filename, Data, Opts)` | Same, `Opts` may set `content_type` and `filename` |
+| `from_path(Path)`, `from_path(Path, Opts)` | Read from a file at delivery time |
+| `inline(Cid, Path)` | An inline part with a Content-ID, referenced from HTML as `<img src="cid:logo">` |
+
+The blog's export email attaches a CSV it built in memory: `hikyaku_attachment:from_data(~"posts.csv", Csv)` in `posts_export/2` above. `.csv` maps to `text/csv`; unknown extensions become `application/octet-stream`.
+
+An inline logo, as a variant (compiled in a scratch module, not part of the blog):
+
+```erlang
+welcome_with_logo(To) ->
+    E0 = hikyaku_email:from(hikyaku_email:new(), ~"noreply@blog.test"),
+    E1 = hikyaku_email:to(E0, To),
+    E2 = hikyaku_email:html_body(E1, ~"<img src=\"cid:logo\" alt=\"Nova Blog\"><p>Welcome!</p>"),
+    hikyaku_email:attachment(E2, hikyaku_attachment:inline(~"logo", ~"priv/assets/logo.png")).
 ```
 
-For inline images (e.g. in HTML emails):
+```admonish bug title="Attachments with hikyaku 0.2.0: check your adapter"
+- **SMTP and SES** build the MIME message with gen_smtp's `mimemail`. With gen_smtp 1.3 (what rebar3 resolves today) the attachment's parameters are ignored: the part goes out as `Content-Disposition: inline`, without its filename and without base64 encoding. The test `smtp_attachment_loses_its_filename` in `test/blog_email_SUITE.erl` pins this.
+- **SendGrid** ignores attachments (and custom headers) entirely.
+- **Mailgun** sends attachments correctly.
 
-```erlang
-LogoAttachment = hikyaku_attachment:from_data(LogoData, <<"logo.png">>),
-InlineAttachment = hikyaku_attachment:inline(LogoAttachment, <<"logo">>),
-
-E0 = hikyaku_email:new(),
-E1 = hikyaku_email:html_body(E0, <<"<h1>Hello</h1><img src=\"cid:logo\">">>),
-E2 = hikyaku_email:attachment(E1, InlineAttachment),
-hikyaku_mailer:deliver(blog_mailer, E2).
+Plain text and HTML bodies are unaffected.
 ```
 
-## Production adapter configuration
+## Adapters
 
-### SendGrid
+Each adapter reads its own keys from the map `config/0` returns. From the 0.2.0 source:
 
-```erlang
--module(blog_mailer).
--behaviour(hikyaku_mailer).
--export([config/0]).
+| Adapter | Delivers via | Keys |
+|---|---|---|
+| `hikyaku_adapter_logger` | OTP logger | `level` (default `notice`) |
+| `hikyaku_adapter_test` | a message `{hikyaku_email, Email}` | `pid` (default: the calling process) |
+| `hikyaku_adapter_smtp` | SMTP, through gen_smtp | `relay` (binary), `port` (default 587), `username`, `password`, `ssl` (`true`/`false`), `tls` (`always`, `never`, `if_available`, the default) |
+| `hikyaku_adapter_mailgun` | Mailgun Messages API | `api_key`, `domain`, `base_url` (default `https://api.mailgun.net`; use `https://api.eu.mailgun.net` for EU accounts) |
+| `hikyaku_adapter_sendgrid` | SendGrid v3 API | `api_key` |
+| `hikyaku_adapter_ses` | Amazon SES v2 API, SigV4-signed | `access_key`, `secret_key`, `region` |
 
-config() ->
-    #{adapter => hikyaku_adapter_sendgrid,
-      api_key => application:get_env(blog, sendgrid_api_key, <<>>)}.
+The HTTP adapters also accept `http_client`, a module with `post/3`, in place of the built-in `httpc` client. All HTTP adapters answer `{ok, #{status => sent, status_code => Code}}` for a 2xx, and `{error, #{status_code => Code, body => Body}}` otherwise.
+
+The built-in HTTP client verifies the provider's certificate (`verify_peer` against `public_key:cacerts_get()`), and `hikyaku` already starts `inets` and `ssl`.
+
+```admonish danger title="SMTP in hikyaku 0.2.0 does not verify the relay's certificate"
+The 0.2.0 SMTP adapter passes only relay, port, credentials, `ssl` and `tls` to gen_smtp, whose STARTTLS default is not to verify the server certificate, and there is no option to change that. Someone on the network path can complete STARTTLS with any certificate and read the SMTP credentials sent right after. Upstream fixed this after 0.2.0 (the fix is not on Hex yet).
+
+Until it is, prefer an HTTP adapter in production, or use SMTP only to a relay on a network you trust (for example a local MTA or a sidecar on the same host).
 ```
 
-### Amazon SES
-
-```erlang
-config() ->
-    #{adapter => hikyaku_adapter_ses,
-      access_key => application:get_env(blog, aws_access_key, <<>>),
-      secret_key => application:get_env(blog, aws_secret_key, <<>>),
-      region => <<"us-east-1">>}.
+```admonish warning title="Using SMTP in a release"
+hikyaku 0.2.0 does not list `gen_smtp` in its `applications`, so a release built with `rebar3 as prod release` leaves gen_smtp out and the SMTP adapter fails with `undef`. If you use SMTP, add `gen_smtp` to the blog's own `applications` list in `src/blog.app.src`.
 ```
 
-### SMTP
+A production mailer config, as a variant (Mailgun's EU region; where the key comes from is covered in the [Configuration](../production/configuration.md) chapter):
 
 ```erlang
-config() ->
-    #{adapter => hikyaku_adapter_smtp,
-      relay => <<"smtp.example.com">>,
-      port => 587,
-      username => application:get_env(blog, smtp_user, <<>>),
-      password => application:get_env(blog, smtp_pass, <<>>),
-      tls => always}.
+{blog, [
+    {mailer, #{
+        adapter => hikyaku_adapter_mailgun,
+        api_key => ~"key-...",
+        domain => ~"mg.blog.example",
+        base_url => ~"https://api.eu.mailgun.net"
+    }},
+    {mail_from, {~"Nova Blog", ~"noreply@blog.example"}},
+    {base_url, ~"https://blog.example"}
+]}
+```
+
+## The test adapter
+
+`hikyaku_adapter_test` sends `{hikyaku_email, Email}` to the `pid` in its config and returns `{ok, #{status => sent}}`. Without a `pid` it sends to the process that called `deliver`, which is only useful when that is your test process. The blog's tests set the pid explicitly with a fixture in `test/blog_jobs_fixtures.erl`:
+
+```erlang
+capture_mail() ->
+    mailer(#{adapter => hikyaku_adapter_test, pid => self()}).
+
+mailer(Config) ->
+    application:set_env(blog, mailer, Config).
+
+receive_email() ->
+    receive
+        {hikyaku_email, Email} -> Email
+    after 2000 -> error(no_email_delivered)
+    end.
+
+refute_email() ->
+    receive
+        {hikyaku_email, Email} -> error({unexpected_email, Email})
+    after 200 -> ok
+    end.
+```
+
+and use it like this:
+
+```erlang
+test_adapter_sends_to_a_process(_Config) ->
+    E0 = hikyaku_email:from(hikyaku_email:new(), ~"noreply@blog.test"),
+    E1 = hikyaku_email:to(E0, ~"alice@example.com"),
+    Email = hikyaku_email:text_body(hikyaku_email:subject(E1, ~"Hi"), ~"Hello Alice"),
+    {ok, #{status := sent}} = blog_mailer:deliver(Email),
+    Email = blog_jobs_fixtures:receive_email().
+```
+
+Setting the pid matters as soon as mail is sent from another process, which is exactly what happens next.
+
+```shell
+rebar3 ct --suite=test/blog_email_SUITE
+```
+
+```
+%%% blog_email_SUITE: .......
+All 7 tests passed.
 ```
 
 ---
 
-Next, let's build [Transactional Email](transactional-email.md) flows — registration confirmation, password reset, and notifications.
+Next: [Transactional Email](transactional-email.md), where the blog sends these emails from background jobs.

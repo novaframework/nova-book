@@ -1,0 +1,8 @@
+{% autoescape off %}Hi {{ username }},
+
+Someone asked to reset the password of your Nova Blog account. To choose a new password, open this link:
+
+{{ url }}
+
+The link works once and expires in {{ hours }} hour{{ hours|pluralize }}. If you did not ask for a reset, ignore this email; your password has not changed.
+{% endautoescape %}
