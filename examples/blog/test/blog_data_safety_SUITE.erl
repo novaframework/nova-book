@@ -60,13 +60,18 @@ optimistic_lock_detects_stale_writes(Config) ->
     {ok, #{title := ~"Edited by Alice"}} = blog_repo:get(blog_post, maps:get(id, Post)).
 
 api_returns_409_on_stale_update(Config) ->
-    #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Shared draft"}),
+    Alice = ?config(alice, Config),
+    Token = blog_data_fixtures:token(Alice),
+    #{id := Id} = blog_data_fixtures:post(Alice, #{~"title" => ~"Shared draft"}),
     Path = "/api/posts/" ++ integer_to_list(Id),
     {200, #{~"lock_version" := 2}} =
-        blog_data_fixtures:request(put, Path, #{title => ~"First edit", lock_version => 1}),
+        blog_data_fixtures:request_as(Token, put, Path, #{title => ~"First edit", lock_version => 1}),
     {409, #{~"error" := ~"post was changed by someone else"}} =
-        blog_data_fixtures:request(put, Path, #{title => ~"Second edit", lock_version => 1}),
-    {200, #{~"lock_version" := 3}} = blog_data_fixtures:request(put, Path, #{title => ~"Retry"}).
+        blog_data_fixtures:request_as(Token, put, Path, #{
+            title => ~"Second edit", lock_version => 1
+        }),
+    {200, #{~"lock_version" := 3}} =
+        blog_data_fixtures:request_as(Token, put, Path, #{title => ~"Retry"}).
 
 audit_log_records_changes(Config) ->
     kura_audit:set_actor(~"alice"),

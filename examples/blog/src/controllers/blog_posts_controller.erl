@@ -31,75 +31,73 @@ show(#{bindings := #{~"id" := Id}}) ->
         {error, not_found} -> not_found()
     end.
 
-create(#{json := Params} = Req) ->
-    case current_author(Req) of
-        {ok, Author} ->
-            case blog_posts:create_post(Author, Params) of
-                {ok, Post} -> {json, 201, #{}, blog_api_json:post(Post)};
-                {error, #kura_changeset{} = CS} -> unprocessable(CS)
-            end;
-        {error, not_found} ->
-            {json, 422, #{}, #{errors => #{user_id => [~"does not exist"]}}}
+create(#{json := Params, auth_data := Actor}) ->
+    case blog_posts:create_post(Actor, Params) of
+        {ok, Post} -> {json, 201, #{}, blog_api_json:post(Post)};
+        {error, #kura_changeset{} = CS} -> unprocessable(CS)
     end;
 create(_Req) ->
     {json, 400, #{}, #{error => ~"expected a JSON body"}}.
 
-update(#{bindings := #{~"id" := Id}, json := Params}) ->
-    case blog_posts:get_post(Id) of
+update(#{bindings := #{~"id" := Id}, json := Params, auth_data := Actor}) ->
+    case authorize(Actor, update_post, blog_posts:get_post(Id)) of
         {ok, Post} ->
             case blog_posts:update_post(Post, Params) of
                 {ok, Updated} -> {json, blog_api_json:post(Updated)};
                 {error, stale} -> {json, 409, #{}, #{error => ~"post was changed by someone else"}};
                 {error, #kura_changeset{} = CS} -> unprocessable(CS)
             end;
-        {error, not_found} ->
-            not_found()
+        Denied ->
+            Denied
     end;
 update(_Req) ->
     {json, 400, #{}, #{error => ~"expected a JSON body"}}.
 
-delete(#{bindings := #{~"id" := Id}}) ->
-    case blog_posts:get_post(Id) of
+delete(#{bindings := #{~"id" := Id}, auth_data := Actor}) ->
+    case authorize(Actor, delete_post, blog_posts:get_post(Id)) of
         {ok, Post} ->
             {ok, _} = blog_posts:delete_post(Post),
             {status, 204};
-        {error, not_found} ->
-            not_found()
+        Denied ->
+            Denied
     end.
 
-create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
-    case {blog_posts:get_post(Id), current_author(Req)} of
-        {{ok, Post}, {ok, Author}} ->
-            case blog_posts:add_comment(Post, Author, Params) of
+create_comment(#{bindings := #{~"id" := Id}, json := Params, auth_data := Actor}) ->
+    case blog_posts:get_post(Id) of
+        {ok, Post} ->
+            case blog_posts:add_comment(Post, Actor, Params) of
                 {ok, Comment} ->
-                    ok = blog_notify:comment_created(Post, Author, Comment),
+                    ok = blog_notify:comment_created(Post, Actor, Comment),
                     {json, 201, #{}, blog_api_json:comment(Comment)};
                 {error, #kura_changeset{} = CS} ->
                     unprocessable(CS)
             end;
-        {{error, not_found}, _} ->
-            not_found();
-        {_, {error, not_found}} ->
-            {json, 422, #{}, #{errors => #{user_id => [~"does not exist"]}}}
+        {error, not_found} ->
+            not_found()
     end.
 
-update_tags(#{bindings := #{~"id" := Id}, json := #{~"tags" := Names}}) when is_list(Names) ->
-    case blog_posts:get_post(Id) of
+update_tags(#{bindings := #{~"id" := Id}, json := #{~"tags" := Names}, auth_data := Actor}) when
+    is_list(Names)
+->
+    case authorize(Actor, update_post, blog_posts:get_post(Id)) of
         {ok, Post} ->
             case blog_posts:tag_post(Post, Names) of
                 {ok, Tagged} -> {json, blog_api_json:post(Tagged)};
                 {error, #kura_changeset{} = CS} -> unprocessable(CS)
             end;
-        {error, not_found} ->
-            not_found()
+        Denied ->
+            Denied
     end;
 update_tags(_Req) ->
     {json, 400, #{}, #{error => ~"expected a tags list"}}.
 
-current_author(#{json := #{~"user_id" := UserId}}) when is_integer(UserId) ->
-    blog_repo:get(blog_user, UserId);
-current_author(_Req) ->
-    {error, not_found}.
+authorize(Actor, Action, {ok, Post}) ->
+    case blog_policy:can(Actor, Action, Post) of
+        true -> {ok, Post};
+        false -> {json, 403, #{}, #{error => ~"you can only change your own posts"}}
+    end;
+authorize(_Actor, _Action, {error, not_found}) ->
+    not_found().
 
 not_found() ->
     {json, 404, #{}, #{error => ~"post not found"}}.

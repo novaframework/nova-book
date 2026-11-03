@@ -268,11 +268,11 @@ The suite checks that the API broadcasts:
 ```erlang
 api_comments_are_broadcast(Config) ->
     #{id := PostId} = ?config(post, Config),
-    #{id := BobId} = ?config(bob, Config),
+    Token = blog_data_fixtures:token(?config(bob, Config)),
     ok = nova_pubsub:join(blog_notify:post_channel(PostId)),
     Path = "/api/posts/" ++ integer_to_list(PostId) ++ "/comments",
     {201, #{~"id" := CommentId}} =
-        blog_data_fixtures:request(post, Path, #{~"user_id" => BobId, ~"body" => ~"Via the API"}),
+        blog_data_fixtures:request_as(Token, post, Path, #{~"body" => ~"Via the API"}),
     receive
         #nova_pubsub{topic = ~"comment_created", payload = #{id := Id, author := Author}} ->
             ?assertEqual({CommentId, ~"bob"}, {Id, Author})
@@ -282,15 +282,21 @@ api_comments_are_broadcast(Config) ->
 
 The test process joins the channel like any other listener, so the test needs no mocks.
 
-Try it with the feed open in a browser and a published post in the database (the [editor](live-feature.md#saving-and-publishing) publishes one). With post 1 and user 1:
+Try it with the feed open in a browser and a published post in the database (the [editor](live-feature.md#saving-and-publishing) publishes one). Writes to the API need a bearer token ([API tokens](../auth-sessions/authentication.md#api-tokens)); get one for your user, then comment on post 1:
 
 ```shell
+TOKEN=$(curl -s -X POST localhost:8080/api/tokens -H 'content-type: application/json' \
+  -d '{"email": "alice@example.com", "password": "correct horse battery"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
 curl -s -X POST localhost:8080/api/posts/1/comments \
-  -H 'content-type: application/json' \
-  -d '{"user_id": 1, "body": "From the API"}'
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"body": "From the API"}'
 ```
 
-The Latest list shows "alice commented on Hello live" (with your user and post). The `user_id` in the body is the stand-in from [CRUD and the Query Builder](../data-layer/crud.md) that Part III replaces with the logged-in user.
+```
+{"id":1,"body":"From the API","user_id":2,"inserted_at":"2026-11-03T08:47:38Z"}
+```
+
+The Latest list shows "alice commented on Hello live" (with your user and post): the author is whoever the token belongs to.
 
 ## Arizona's pub/sub
 

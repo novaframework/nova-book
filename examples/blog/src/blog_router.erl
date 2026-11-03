@@ -74,14 +74,77 @@ routes(_Environment) ->
             security => false,
             routes => [
                 {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "/api",
+            security => fun blog_security:require_bearer/1,
+            routes => [
                 {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
-                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
                 {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},
                 {"/posts/:id", fun blog_posts_controller:delete/1, #{methods => [delete]}},
                 {"/posts/:id/comments", fun blog_posts_controller:create_comment/1, #{
                     methods => [post]
                 }},
-                {"/posts/:id/tags", fun blog_posts_controller:update_tags/1, #{methods => [put]}}
+                {"/posts/:id/tags", fun blog_posts_controller:update_tags/1, #{methods => [put]}},
+                {"/tokens", fun blog_tokens_controller:delete/1, #{methods => [delete]}}
+            ]
+        },
+        #{
+            prefix => "/api",
+            security => false,
+            plugins => [
+                {pre_request, nova_request_plugin, #{decode_json_body => true}},
+                {pre_request, blog_rate_limit, login_rate_limit()}
+            ],
+            routes => [
+                {"/tokens", fun blog_tokens_controller:create/1, #{methods => [post]}}
+            ]
+        },
+        #{
+            prefix => "",
+            security => fun blog_security:current_user/1,
+            plugins => html_plugins(),
+            routes => [
+                {"/posts", fun blog_posts_html_controller:index/1, #{methods => [get]}},
+                {"/posts/:id", fun blog_posts_html_controller:show/1, #{methods => [get]}},
+                {"/login", fun blog_session_controller:new/1, #{methods => [get]}},
+                {"/register", fun blog_registration_controller:new/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "",
+            security => false,
+            plugins => [
+                {pre_request, blog_rate_limit, login_rate_limit()} | html_plugins()
+            ],
+            routes => [
+                {"/login", fun blog_session_controller:create/1, #{methods => [post]}},
+                {"/register", fun blog_registration_controller:create/1, #{methods => [post]}}
+            ]
+        },
+        #{
+            prefix => "",
+            security => fun blog_security:require_user/1,
+            plugins => html_plugins(),
+            routes => [
+                {"/posts/new", fun blog_posts_html_controller:new/1, #{methods => [get]}},
+                {"/posts", fun blog_posts_html_controller:create/1, #{methods => [post]}},
+                {"/posts/:id/edit", fun blog_posts_html_controller:edit/1, #{methods => [get]}},
+                {"/posts/:id", fun blog_posts_html_controller:update/1, #{methods => [post]}},
+                {"/posts/:id/delete", fun blog_posts_html_controller:delete/1, #{
+                    methods => [post]
+                }},
+                {"/logout", fun blog_session_controller:delete/1, #{methods => [post]}}
+            ]
+        },
+        #{
+            prefix => "/admin",
+            security => fun blog_security:require_admin/1,
+            plugins => html_plugins(),
+            routes => [
+                {"/users", fun blog_admin_controller:users/1, #{methods => [get]}}
             ]
         },
         #{
@@ -124,3 +187,18 @@ routes(_Environment) ->
             ]
         }
     ].
+
+html_plugins() ->
+    [
+        {pre_request, nova_request_plugin, #{read_urlencoded_body => true}},
+        {pre_request, nova_csrf_plugin, #{}}
+    ].
+
+login_rate_limit() ->
+    #{
+        limiter => blog_login_limiter,
+        limit => 5,
+        window => 60000,
+        algorithm => sliding_window,
+        key_fun => fun blog_rate_limit:client_ip/1
+    }.

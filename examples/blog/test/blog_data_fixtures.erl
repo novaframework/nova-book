@@ -1,6 +1,7 @@
 -module(blog_data_fixtures).
 
 -export([start/0, checkout/0, checkin/0, user/1, post/2, url/1, request/3, request/2]).
+-export([token/1, request_as/3, request_as/4]).
 
 start() ->
     ok = application:set_env(nova_auth, pbkdf2_iterations, 1000),
@@ -43,6 +44,26 @@ request(Method, Path, Json) ->
     {ok, {{_, Status, _}, _, RespBody}} =
         httpc:request(Method, {url(Path), [], "application/json", Body}, [], [{body_format, binary}]),
     {Status, decode(RespBody)}.
+
+token(User) ->
+    {ok, Token} = blog_accounts:issue_token(User),
+    Token.
+
+request_as(Token, Method, Path) ->
+    {ok, {{_, Status, _}, _, Body}} = httpc:request(
+        Method, {url(Path), [bearer(Token)]}, [], [{body_format, binary}]
+    ),
+    {Status, decode(Body)}.
+
+request_as(Token, Method, Path, Json) ->
+    Body = iolist_to_binary(json:encode(Json)),
+    {ok, {{_, Status, _}, _, RespBody}} = httpc:request(
+        Method, {url(Path), [bearer(Token)], "application/json", Body}, [], [{body_format, binary}]
+    ),
+    {Status, decode(RespBody)}.
+
+bearer(Token) ->
+    {"authorization", "Bearer " ++ binary_to_list(Token)}.
 
 decode(<<>>) -> <<>>;
 decode(Body) -> json:decode(Body).

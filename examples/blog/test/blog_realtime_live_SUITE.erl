@@ -157,11 +157,11 @@ broadcasts_are_merged_idempotently(Config) ->
 
 api_comments_are_broadcast(Config) ->
     #{id := PostId} = ?config(post, Config),
-    #{id := BobId} = ?config(bob, Config),
+    Token = blog_data_fixtures:token(?config(bob, Config)),
     ok = nova_pubsub:join(blog_notify:post_channel(PostId)),
     Path = "/api/posts/" ++ integer_to_list(PostId) ++ "/comments",
     {201, #{~"id" := CommentId}} =
-        blog_data_fixtures:request(post, Path, #{~"user_id" => BobId, ~"body" => ~"Via the API"}),
+        blog_data_fixtures:request_as(Token, post, Path, #{~"body" => ~"Via the API"}),
     receive
         #nova_pubsub{topic = ~"comment_created", payload = #{id := Id, author := Author}} ->
             ?assertEqual({CommentId, ~"bob"}, {Id, Author})
