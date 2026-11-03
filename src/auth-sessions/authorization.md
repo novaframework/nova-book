@@ -39,6 +39,8 @@ policies(Action) when Action =:= update_post; Action =:= delete_post; Action =:=
     [nova_auth_policy:allow_role(admin), nova_auth_policy:allow_owner(user_id)];
 policies(manage_users) ->
     [nova_auth_policy:allow_role(admin)];
+policies(manage_tags) ->
+    [nova_auth_policy:allow_role(admin)];
 policies(_Action) ->
     [nova_auth_policy:deny_all()].
 ```
@@ -214,8 +216,8 @@ show(#{bindings := #{~"id" := Id}} = Req) ->
 
 `auth_data` is only there for a logged-in reader (the route group uses `current_user/1`), hence the `undefined` default, which `can/3` denies.
 
-```admonish warning title="The JSON API still shows drafts"
-The read endpoints from [CRUD & the Query Builder](../data-layer/crud.md) stay public and unfiltered: `GET /api/posts?status=draft` lists every draft and `GET /api/posts/:id` returns one. The HTML side is locked down; before you publish the API, filter reads to published posts for anonymous callers, or scope them to the caller as the next section shows.
+```admonish warning title="The JSON API"
+The read endpoints from [CRUD & the Query Builder](../data-layer/crud.md) are not covered by this: at this point `GET /api/posts?status=draft` still lists every draft. [Security](../production/security.md#drafts-in-the-json-api) closes that gap with the scoping technique of the next section.
 ```
 
 ## Scoping queries to the owner
@@ -295,7 +297,7 @@ rebar3 nova audit
   Summary: 17 warning(s), 14 info(s)
 ```
 
-Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The tag routes from [JSON APIs with Generators](../building-api/json-api.md) are a real gap: anyone can create, rename or delete tags. Put them behind `blog_security:require_bearer/1`, and admins only if tags are shared, before deploying.
+Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The tag routes from [JSON APIs with Generators](../building-api/json-api.md) are a real gap: anyone can create, rename or delete tags. [Security](../production/security.md#tag-writes-need-an-admin) puts them behind an admin bearer token using the `manage_tags` policy above.
 
 ## Running the tests
 

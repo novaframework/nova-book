@@ -329,7 +329,7 @@ The actor stored at login contains at least `id` (Arizona relies on that) and `p
 #{id => 2, provider => password, username => ~"alice", role => author}
 ```
 
-The live views of Part VI read it with `nova_auth_actor:fetch/1` in a middleware and redirect to `/login` without one; [Live Views](../arizona/live-views.md) shows how. Because the live views trust that copy, whatever ends a login must clear it. Logout renews the whole session, and `session_actor/1` above clears it whenever the token check fails. A password change on another device only deletes tokens; that session's actor goes away on its next plain HTTP request.
+The live views of Part VI do not trust that copy: their middleware calls `session_actor/1` above, so every live page mount and WebSocket connect checks the token in the database and redirects to `/login` when it is gone ([Live Views](../arizona/live-views.md)). That matters because a password change or reset only deletes tokens; the cached actor stays in the session until `session_actor/1` clears it after the next failed check. [Security](../production/security.md#live-views-verify-the-token) has the test.
 
 ## The routes
 
@@ -660,7 +660,7 @@ login_sets_session_and_redirects(_Config) ->
         nova_auth_actor:fetch(Req).
 ```
 
-The last two lines check the contract with Arizona: the session holds an actor with an `id`. The rate-limit tests call `blog_web:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_data_fixtures:token/1` issues a token directly and `request_as/3,4` sends it:
+The last two lines check that login caches the actor, with its `id`, in the session. The rate-limit tests call `blog_web:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_data_fixtures:token/1` issues a token directly and `request_as/3,4` sends it:
 
 ```erlang
 post_author_comes_from_token(Config) ->
