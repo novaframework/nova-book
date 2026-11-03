@@ -93,7 +93,7 @@ blog
 - **`priv/`** - files shipped with the application (static assets, data files)
 - **`rebar.config`** - dependencies, profiles, release settings and plugins
 
-The generated `rebar.config` depends on `nova` from Hex and lists `rebar3_nova` again as a *project* plugin, fetched from the GitHub `master` branch. Inside the project that copy wins over your global one, so `rebar3 nova ...` in the project directory runs whatever is on `master` at the time you first fetched it. If you prefer a released version, change the entry to `{rebar3_nova, "~> 0.13"}`.
+The generated `rebar.config` depends on `nova` from Hex and lists `rebar3_nova` again as a *project* plugin, fetched from the GitHub `master` branch. Inside the project that copy wins over your global one, so `rebar3 nova ...` in the project directory runs whatever is on `master` at the time you first fetched it. For the companion app that is 0.13.4, one release ahead of Hex; where a later chapter names a `rebar3_nova` version, it is this project plugin. If you prefer a released version, change the entry to `{rebar3_nova, "~> 0.13"}`.
 
 ```admonish note
 `.tool-versions` pins Erlang 28.0.4 and rebar 3.25.0 for mise and asdf. The book uses OTP 29 and rebar3 3.27; bump the pins or delete the file if mise or asdf would otherwise install the older toolchain.
@@ -244,7 +244,7 @@ Do not follow the `json_lib` hint literally. Nova reads `json_lib` from your *ap
 
 The finished blog lives in [`examples/blog`](https://github.com/novaframework/nova-book/tree/main/examples/blog) in the book's repository. It started as exactly this scaffold. Over the course of the book it grows:
 
-- **Dependencies** - `rebar.config` gains `kura` and `kura_postgres` (data layer on PostgreSQL via minato), `nova_auth` (authentication), `shigoto` (background jobs), `hikyaku` (email), `arizona_nova` (real-time views) and `opentelemetry_nova`/`opentelemetry_kura` (observability). The test profile adds `nova_test`.
+- **Dependencies** - `rebar.config` gains `kura` and `kura_postgres` (data layer on PostgreSQL via minato), `nova_auth` (authentication), `shigoto` (background jobs), `hikyaku` (email), `arizona_nova` (real-time views), `nova_json_schemas` (request validation) and `opentelemetry`, `opentelemetry_exporter`, `opentelemetry_nova` and `opentelemetry_kura` (observability). The test profile adds `nova_test` and `gun` (a WebSocket client for the real-time tests).
 - **Plugins** - `rebar3_kura` joins the project plugins and a `{compile, {kura, compile}}` hook runs next to the ErlyDTL one.
 - **Configuration** - `config/test_sys.config` is added for Common Test, the configs gain a `kura` section with the repo settings, and a `blog` section holds the app's own settings (the JSON library, tokens and so on).
 - **Code** - controllers, views, schemas, migrations and tests under `src/`, `priv/` and `test/`, chapter by chapter.

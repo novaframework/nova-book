@@ -1,6 +1,6 @@
 # Integration Testing
 
-Unit tests check functions. Integration tests check that the pieces work together: a request goes through Cowboy, the router, plugins, security functions, a controller, Kura and PostgreSQL, and comes back as the response a browser or API client sees. The blog has 27 Common Test suites doing that, one or more per chapter. This chapter shows how they are put together, so you can write the next one.
+Unit tests check functions. Integration tests check that the pieces work together: a request goes through Cowboy, the router, plugins, security functions, a controller, Kura and PostgreSQL, and comes back as the response a browser or API client sees. The blog has 32 Common Test suites doing that, one or more per chapter. This chapter shows how they are put together, so you can write the next one.
 
 ## The test database
 
@@ -128,7 +128,7 @@ token(User) ->
 
 ## JSON APIs with `nova_test`
 
-`nova_test` has an HTTP client on top of `httpc` that reads the port from `cowboy_configuration`. `nova_test:start(App, Config)` starts the app and puts the port in the CT config, and its assertion macros work on the response. `test/blog_nova_test_SUITE.erl` uses it for the API from [Part V](../building-api/json-api.md):
+`nova_test` has an HTTP client on top of `httpc` that reads the port from `cowboy_configuration`. `nova_test:start(App, Config)` starts the app and puts the port in the CT config, and its assertion macros work on the response. `test/blog_nova_test_SUITE.erl` uses it for the posts API from [CRUD](../data-layer/crud.md) and [API tokens](../auth-sessions/authentication.md#api-tokens):
 
 ```erlang
 -module(blog_nova_test_SUITE).
@@ -234,7 +234,7 @@ With it, tests read like the steps a person takes. From `blog_auth_login_SUITE`:
 ```erlang
 login_without_csrf_token_is_403(_Config) ->
     {200, _, _, Jar} = blog_web:get(#{}, "/login"),
-    {403, _, <<"Forbidden - CSRF token invalid">>, _} =
+    {403, _, ~"Forbidden - CSRF token invalid", _} =
         blog_web:post_form(Jar, "/login", [{"email", "alice@example.com"}, {"password", ?PASSWORD}]).
 
 logout_requires_csrf_token(_Config) ->

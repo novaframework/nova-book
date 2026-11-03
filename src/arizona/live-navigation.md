@@ -109,7 +109,7 @@ A flash set by a live handler cannot survive a *full* page load, because a WebSo
 
 ## Middlewares run on every navigation
 
-A navigation is a request for a page, so the target route's middlewares run exactly as they do over HTTP. The dashboard is behind `require_user/2`. When a logged-out reader clicks "Your posts", the redirect to `/login` becomes a navigate effect that replaces the history entry. `/login` is a Nova page, so it is loaded normally. A middleware that halts without a redirect, like `published_post/2` with its `404`, makes the client load the path normally, so the browser gets the real error response.
+A navigation is a request for a page, so the target route's middlewares run exactly as they do over HTTP. The dashboard is behind `require_user/2`. When a logged-out reader clicks "Your posts", the redirect to `/login` becomes a navigate effect that replaces the history entry. `/login` is a Nova page, so it is loaded normally. A middleware that halts without a redirect, like `published_post/2` with its `404` (added in [Building a Live Feature](../real-time/live-feature.md)), makes the client load the path normally, so the browser gets the real error response.
 
 The socket's requests are built from the cookies the browser sent when the WebSocket connected. That is why logging in and out are normal page loads (see [Live Views](live-views.md#who-is-logged-in)): they give the next socket the new session cookie.
 

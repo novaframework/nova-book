@@ -39,15 +39,7 @@ That makes templates easy to test without HTTP, as the end of this chapter shows
 
 ## Rendering from a controller
 
-A controller renders a template by returning `ok` (or its alias `view`) and the variables:
-
-| Return | Renders |
-|--------|---------|
-| `{ok, Vars}` | The controller's default template |
-| `{ok, Vars, Options}` | As `Options` says |
-| `{ok, Vars, Options, Req}` | The same, with a modified request (cookies, headers) |
-
-The default template is the controller module with `_controller` replaced by `_dtl`: `blog_main_controller` renders `blog_main_dtl`, from `blog_main.dtl`. Options:
+A controller renders a template by returning `{ok, Vars}`, `{ok, Vars, Options}` or `{ok, Vars, Options, Req}` (`view` is an alias for `ok`); [Controllers](../foundations/controllers.md#rendering-templates) introduced the forms. The default template is the controller module with `_controller` replaced by `_dtl`: `blog_main_controller` renders `blog_main_dtl`, from `blog_main.dtl`. Options:
 
 | Option | Default | Meaning |
 |--------|---------|---------|

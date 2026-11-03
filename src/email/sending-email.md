@@ -31,6 +31,7 @@ and starts it with the application, in `src/blog.app.src`:
     kura_postgres,
     nova_auth,
     nova_json_schemas,
+    arizona_nova,
     shigoto,
     hikyaku
 ]},

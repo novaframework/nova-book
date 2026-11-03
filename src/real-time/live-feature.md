@@ -378,4 +378,4 @@ All 15 tests passed.
 
 ---
 
-The blog now has live pages, a live comment section and a site-wide feed. [Testing Real-Time](../testing/testing-realtime.md) goes deeper into testing them.
+The blog now has live pages, a live comment section and a site-wide feed. Next, Part VIII sends email: [Sending Email](../email/sending-email.md).

@@ -131,7 +131,7 @@ Failing jobs log `job failed` and `job discarded` warnings during the run; that 
 
 `status` is `degraded` when there are stale jobs or a queue is down, and the answer is `{error, #{status => unhealthy, ...}}` when the database cannot be reached.
 
-The blog serves it under the token-protected `/ops` prefix from [Plugins & Middleware](../foundations/plugins.md). A group in `src/blog_router.erl`, before the last (static files and error pages) group:
+The blog serves it under the token-protected `/ops` prefix from [Routing](../foundations/routing.md#security). A group in `src/blog_router.erl`, before the last (static files and error pages) group:
 
 ```erlang
 #{

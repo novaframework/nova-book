@@ -2,7 +2,7 @@
 
 HTTP is stateless. To remember a reader between requests (who is logged in, which flash message to show, which CSRF token belongs to which form) the server keeps a little data per visitor and gives the browser a key to it in a cookie. That is a session.
 
-Nova has sessions built in. This chapter shows how they work in Nova 0.18, what the defaults get wrong, and how the blog hardens them before Part III builds login on top.
+Nova has sessions built in. This chapter shows how they work in Nova 0.18, what the defaults get wrong, and how the blog hardens them before the next chapter builds login on top.
 
 ## How Nova sessions work
 

@@ -28,7 +28,7 @@ Throughout this book you will build a **blog platform** step by step:
 
 The blog has users who write posts, readers who leave comments, and tags for organizing content. That exercises the whole ecosystem: Nova for the web layer, Kura (with the minato PostgreSQL driver) for data, Arizona for real-time views, Hikyaku for email and Shigoto for work that should not happen inside a request.
 
-The finished application is in [`examples/blog`](https://github.com/novaframework/nova-book/tree/main/examples/blog) in the book's repository. Every code sample in the book comes from it, and its test suite exercises what each chapter describes.
+The finished application is in [`examples/blog`](https://github.com/novaframework/nova-book/tree/main/examples/blog) in the book's repository. Every code sample in the book comes from it, except those marked as variants or alternatives, and its test suite exercises what each chapter describes.
 
 ```admonish info title="Prerequisites"
 Before starting, make sure you have:
