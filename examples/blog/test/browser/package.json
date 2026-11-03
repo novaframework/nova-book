@@ -1,0 +1,15 @@
+{
+  "name": "blog-browser-check",
+  "private": true,
+  "type": "module",
+  "description": "Optional headless-browser check for the blog's live pages",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "25.16.0"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}
