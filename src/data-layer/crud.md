@@ -304,7 +304,7 @@ unprocessable(CS) ->
 The `json` key in the request map is the body decoded by `nova_request_plugin` (configured in [Plugins](../foundations/plugins.md)). A request without a JSON body has no `json` key and falls through to the 400 clause.
 
 ```admonish warning title="Temporary: the author comes from the body"
-`current_author/1` trusts a `user_id` in the JSON body. That is fine for trying out the API locally and nowhere else: anyone could post as anyone. Part III replaces it with the logged-in user from the session.
+`current_author/1` trusts a `user_id` in the JSON body. That is fine for trying out the API locally and nowhere else: anyone could post as anyone. [Authentication](../auth-sessions/authentication.md#api-tokens) removes it: the write routes then require a bearer token, and the author is the user the token belongs to.
 ```
 
 ## Routes
@@ -485,20 +485,23 @@ end_per_testcase(_Case, _Config) ->
     blog_data_fixtures:checkin().
 
 api_create_show_update_delete(Config) ->
-    #{id := AliceId} = ?config(alice, Config),
+    #{id := AliceId} = Alice = ?config(alice, Config),
+    Token = blog_data_fixtures:token(Alice),
     {201, #{~"id" := Id, ~"status" := ~"draft", ~"user_id" := AliceId}} =
-        blog_data_fixtures:request(post, "/api/posts", #{
-            title => ~"My First Post", body => ~"Hello from Nova!", user_id => AliceId
+        blog_data_fixtures:request_as(Token, post, "/api/posts", #{
+            title => ~"My First Post", body => ~"Hello from Nova!"
         }),
     Path = "/api/posts/" ++ integer_to_list(Id),
     {200, #{~"title" := ~"My First Post", ~"published_at" := null}} =
         blog_data_fixtures:request(get, Path),
     {200, #{~"status" := ~"published", ~"published_at" := <<_/binary>>}} =
-        blog_data_fixtures:request(put, Path, #{status => ~"published"}),
-    {204, <<>>} = blog_data_fixtures:request(delete, Path),
+        blog_data_fixtures:request_as(Token, put, Path, #{status => ~"published"}),
+    {204, <<>>} = blog_data_fixtures:request_as(Token, delete, Path),
     {404, #{~"error" := ~"post not found"}} = blog_data_fixtures:request(get, Path),
     {404, _} = blog_data_fixtures:request(get, "/api/posts/abc").
 ```
+
+This is the test as it stands at the end of Part III, where writes need a bearer token: `token/1` issues one for a user and `request_as/4` sends it. Until you get there, call `request/3` and put `user_id => AliceId` in the body, as the curl examples below do.
 
 Run these two suites with:
 

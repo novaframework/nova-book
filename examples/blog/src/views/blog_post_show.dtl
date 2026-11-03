@@ -1,0 +1,21 @@
+{% extends "blog_layout.dtl" %}
+{% block title %}{{ post.title }}{% endblock %}
+{% block content %}
+<article class="post">
+  <h1>{{ post.title }}</h1>
+  <p class="meta">
+    by {{ post.author }} on {{ post.inserted_at|date:"j M Y" }}
+    {% if post.status != "published" %}<span class="badge">{{ post.status }}</span>{% endif %}
+  </p>
+  {% for paragraph in post.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+</article>
+{% if can_edit %}
+<div class="actions">
+  <a href="/posts/{{ post.id }}/edit">Edit</a>
+  <form class="inline" method="post" action="/posts/{{ post.id }}/delete">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="danger">Delete</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

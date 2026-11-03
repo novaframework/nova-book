@@ -1,0 +1,5 @@
+<article class="post-card">
+  <h2><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
+  <p class="meta">by {{ post.author }} on {{ post.inserted_at|date:"j M Y" }}</p>
+  <p>{{ post.body|truncatewords:30 }}</p>
+</article>

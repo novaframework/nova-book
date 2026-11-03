@@ -8,4 +8,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {#{strategy => one_for_all}, []}}.
+    Children = [
+        #{id => blog_notify_log, start => {blog_notify_log, start_link, []}}
+    ],
+    {ok, {#{strategy => one_for_all}, Children}}.

@@ -1,0 +1,3 @@
+{% for message in flash %}
+<p class="flash flash-{{ message.kind }}" role="status">{{ message.text }}</p>
+{% endfor %}

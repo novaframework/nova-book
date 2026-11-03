@@ -59,10 +59,10 @@ inline_mode_delivers_on_insert(Config) ->
 
 api_comment_is_mailed_by_the_queue(Config) ->
     #{id := PostId} = ?config(post, Config),
-    #{id := BobId} = ?config(bob, Config),
+    Token = blog_data_fixtures:token(?config(bob, Config)),
     Path = "/api/posts/" ++ integer_to_list(PostId) ++ "/comments",
     {201, #{~"id" := CommentId}} =
-        blog_data_fixtures:request(post, Path, #{body => ~"Lovely", user_id => BobId}),
+        blog_data_fixtures:request_as(Token, post, Path, #{body => ~"Lovely"}),
     shigoto_testing:assert_enqueued(#{
         worker => blog_comment_notification_worker,
         args => #{~"comment_id" => CommentId},

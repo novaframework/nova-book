@@ -134,30 +134,32 @@ paginate_lists_newest_first(Config) ->
         blog_posts:list_posts(#{~"page" => ~"2"}).
 
 api_create_show_update_delete(Config) ->
-    #{id := AliceId} = ?config(alice, Config),
+    #{id := AliceId} = Alice = ?config(alice, Config),
+    Token = blog_data_fixtures:token(Alice),
     {201, #{~"id" := Id, ~"status" := ~"draft", ~"user_id" := AliceId}} =
-        blog_data_fixtures:request(post, "/api/posts", #{
-            title => ~"My First Post", body => ~"Hello from Nova!", user_id => AliceId
+        blog_data_fixtures:request_as(Token, post, "/api/posts", #{
+            title => ~"My First Post", body => ~"Hello from Nova!"
         }),
     Path = "/api/posts/" ++ integer_to_list(Id),
     {200, #{~"title" := ~"My First Post", ~"published_at" := null}} =
         blog_data_fixtures:request(get, Path),
     {200, #{~"status" := ~"published", ~"published_at" := <<_/binary>>}} =
-        blog_data_fixtures:request(put, Path, #{status => ~"published"}),
-    {204, <<>>} = blog_data_fixtures:request(delete, Path),
+        blog_data_fixtures:request_as(Token, put, Path, #{status => ~"published"}),
+    {204, <<>>} = blog_data_fixtures:request_as(Token, delete, Path),
     {404, #{~"error" := ~"post not found"}} = blog_data_fixtures:request(get, Path),
     {404, _} = blog_data_fixtures:request(get, "/api/posts/abc").
 
 api_validation_errors(Config) ->
-    #{id := AliceId} = ?config(alice, Config),
+    #{id := AliceId} = Alice = ?config(alice, Config),
+    Token = blog_data_fixtures:token(Alice),
     {422, #{
         ~"errors" := #{
             ~"title" := [~"should be at least 3 character(s)"], ~"body" := [~"can't be blank"]
         }
     }} =
-        blog_data_fixtures:request(post, "/api/posts", #{title => ~"Hi", user_id => AliceId}),
-    {422, #{~"errors" := #{~"user_id" := [~"does not exist"]}}} =
-        blog_data_fixtures:request(post, "/api/posts", #{
+        blog_data_fixtures:request_as(Token, post, "/api/posts", #{title => ~"Hi"}),
+    {201, #{~"user_id" := AliceId}} =
+        blog_data_fixtures:request_as(Token, post, "/api/posts", #{
             title => ~"Hello", body => ~"x", user_id => 0
         }).
 

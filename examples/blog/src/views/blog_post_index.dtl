@@ -1,0 +1,13 @@
+{% extends "blog_layout.dtl" %}
+{% block content %}
+<h1>Posts</h1>
+{% for post in posts %}
+  {% include "partials/post_card.dtl" %}
+{% empty %}
+  <p>No posts yet.</p>
+{% endfor %}
+<nav class="pager">
+  {% if prev_page %}<a href="/posts?page={{ prev_page }}">Newer</a>{% endif %}
+  {% if next_page %}<a href="/posts?page={{ next_page }}">Older</a>{% endif %}
+</nav>
+{% endblock %}
