@@ -9,7 +9,9 @@
     bare_status_return_skips_status_handler/1,
     unexpected_error_reaches_fallback/1,
     unguarded_schema_route_crashes_without_json/1,
-    unknown_api_path_is_json_404/1
+    unknown_api_path_is_json_404/1,
+    plugin_crash_uses_500_handler/1,
+    security_crash_skips_500_handler/1
 ]).
 
 all() ->
@@ -20,7 +22,9 @@ all() ->
         bare_status_return_skips_status_handler,
         unexpected_error_reaches_fallback,
         unguarded_schema_route_crashes_without_json,
-        unknown_api_path_is_json_404
+        unknown_api_path_is_json_404,
+        plugin_crash_uses_500_handler,
+        security_crash_skips_500_handler
     ].
 
 init_per_suite(Config) ->
@@ -41,6 +45,23 @@ init_per_suite(Config) ->
             }}
         ]
     }),
+    ok = nova_router:add_routes(blog, [
+        #{
+            prefix => "/errors/plugin",
+            security => false,
+            plugins => [{pre_request, blog_api_errors_test_plugin, #{}}],
+            routes => [
+                {"/", fun blog_api_errors_test_controller:bare_status/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "/errors/security",
+            security => fun blog_api_errors_test_controller:crashing_security/1,
+            routes => [
+                {"/", fun blog_api_errors_test_controller:bare_status/1, #{methods => [get]}}
+            ]
+        }
+    ]),
     Config.
 
 end_per_suite(_Config) ->
@@ -83,6 +104,13 @@ unguarded_schema_route_crashes_without_json(_Config) ->
 unknown_api_path_is_json_404(_Config) ->
     {404, _, Body} = get("/api/nothing-here", "application/json"),
     #{~"error" := ~"not_found"} = json:decode(Body).
+
+plugin_crash_uses_500_handler(_Config) ->
+    {500, _, Body} = get("/errors/plugin", "application/json"),
+    #{~"error" := ~"internal_error"} = json:decode(Body).
+
+security_crash_skips_500_handler(_Config) ->
+    {500, _, <<>>} = get("/errors/security", "application/json").
 
 get(Path, Accept) ->
     {ok, {{_, Status, _}, Headers, Body}} =

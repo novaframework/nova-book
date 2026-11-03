@@ -18,13 +18,10 @@ get_tag(Id, Preloads) ->
     end.
 
 create_tag(Params) ->
-    blog_repo:insert(changeset(#{}, Params)).
+    blog_repo:insert(blog_tag:changeset(#{}, Params)).
 
 update_tag(Tag, Params) ->
-    blog_repo:update(changeset(Tag, Params)).
+    blog_repo:update(blog_tag:changeset(Tag, Params)).
 
 delete_tag(Tag) ->
     blog_repo:delete(kura_changeset:cast(blog_tag, Tag, #{}, [])).
-
-changeset(Tag, Params) ->
-    kura_changeset:unique_constraint(blog_tag:changeset(Tag, Params), name).
