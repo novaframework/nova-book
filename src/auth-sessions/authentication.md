@@ -123,12 +123,13 @@ The config type lists `hash_algorithm => pbkdf2_sha256 | bcrypt | argon2`. In 0.
 ]).
 
 register(Params) ->
-    nova_auth_accounts:register(
-        blog_auth, fun blog_user:registration_changeset/2, normalize_email(Params)
-    ).
+    nova_auth_accounts:register(blog_auth, fun blog_user:registration_changeset/2, Params).
 
 authenticate(Email, Password) when is_binary(Email), is_binary(Password) ->
-    nova_auth_accounts:authenticate(blog_auth, string:casefold(string:trim(Email)), Password);
+    case blog_user:normalize_email(Email) of
+        {ok, Normalized} -> nova_auth_accounts:authenticate(blog_auth, Normalized, Password);
+        {error, invalid_encoding} -> {error, invalid_credentials}
+    end;
 authenticate(_Email, _Password) ->
     {error, invalid_credentials}.
 
@@ -145,15 +146,11 @@ revoke_token(Token) ->
 
 actor(#{id := Id, username := Username, role := Role}) ->
     #{id => Id, provider => password, username => Username, role => Role}.
-
-normalize_email(#{~"email" := Email} = Params) when is_binary(Email) ->
-    Params#{~"email" := string:casefold(string:trim(Email))};
-normalize_email(Params) ->
-    Params.
 ```
 
-- `register/1` runs `blog_user:registration_changeset/2` from [Changesets](../data-layer/changesets.md), which validates and hashes the password, and inserts the user. Errors come back as a changeset, ready for the form.
-- `authenticate/2` returns `{ok, User}` or `{error, invalid_credentials}`, the same error for a wrong password and an unknown email. For an unknown email `nova_auth` still runs a dummy hash, so the response time does not tell an attacker which emails exist. Emails are trimmed and lowercased on the way in and on the way to the database, so `Alice@Example.com` logs in as `alice@example.com`.
+- `register/1` runs `blog_user:registration_changeset/2` from [Changesets](../data-layer/changesets.md), which normalises the email, validates and hashes the password, scrubs the plain text, and inserts the user. Errors come back as a changeset, ready for the form, with no password in it.
+- `authenticate/2` returns `{ok, User}` or `{error, invalid_credentials}`, the same error for a wrong password and an unknown email. For an unknown email `nova_auth` still runs a dummy hash, so the response time does not tell an attacker which emails exist.
+- `authenticate/2` normalises the login email with `blog_user:normalize_email/1`, the function the registration changeset uses, so `Alice@Example.com` logs in as `alice@example.com`. Registration and login must agree on the canonical form exactly; one shared function is how they keep agreeing when the rule changes. Input that is not valid UTF-8 cannot match any stored address and gets the same `invalid_credentials` as everything else.
 - `issue_token/1` creates a row in `user_tokens` and returns the raw token. Only its SHA-256 hash is stored, so a leaked database backup holds no usable tokens.
 - `user_for_token/1` turns a token back into a user, or an error once the token is older than `session_validity_days` or has been deleted.
 - `actor/1` is the small map the rest of the app (and Arizona) sees as "the current user".

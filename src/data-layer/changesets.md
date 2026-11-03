@@ -90,7 +90,8 @@ Users need more validation, and a password hash. `blog_user.erl` gains these fun
     profile_changeset/2,
     password_changeset/2,
     email_changeset/2,
-    role_changeset/2
+    role_changeset/2,
+    normalize_email/1
 ]).
 
 registration_changeset(Data, Params) ->
@@ -101,7 +102,7 @@ registration_changeset(Data, Params) ->
     CS2 = validate_email(CS1),
     CS3 = validate_username(CS2),
     CS4 = validate_password(CS3),
-    hash_password(CS4).
+    scrub_password(hash_password(CS4)).
 
 profile_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [username]),
@@ -111,28 +112,102 @@ profile_changeset(Data, Params) ->
 password_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [password, password_confirmation]),
     CS1 = kura_changeset:validate_required(CS, [password]),
-    hash_password(validate_password(CS1)).
+    scrub_password(hash_password(validate_password(CS1))).
 
 email_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [email]),
     CS1 = kura_changeset:validate_required(CS, [email]),
-    validate_email(CS1).
+    reset_confirmation(validate_email(CS1)).
 
 role_changeset(Data, Params) ->
     CS = kura_changeset:cast(?MODULE, Data, Params, [role]),
     kura_changeset:validate_required(CS, [role]).
+```
+
+There is one changeset per use case. Registration may set email, username and password; a profile update may only touch the username; changing the role is a separate, admin-only operation. Splitting them keeps each allow-list as small as it can be. The private helpers they share are where the rules live. We go through them one group at a time.
+
+### One address, one account
+
+```erlang
+normalize_email(Email) ->
+    case unicode:characters_to_nfc_binary(Email) of
+        Normalized when is_binary(Normalized) ->
+            {ok, string:casefold(string:trim(Normalized))};
+        _ ->
+            {error, invalid_encoding}
+    end.
 
 validate_email(CS) ->
-    CS1 = kura_changeset:validate_format(CS, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"),
-    kura_changeset:validate_length(CS1, email, [{max, 160}]).
+    CS1 = put_normalized_email(CS, kura_changeset:get_change(CS, email)),
+    CS2 = kura_changeset:validate_format(CS1, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+\\z"),
+    kura_changeset:validate_length(CS2, email, [{max, 160}]).
 
+put_normalized_email(CS, undefined) ->
+    CS;
+put_normalized_email(CS, Email) ->
+    case normalize_email(Email) of
+        {ok, Normalized} -> put_email(CS, Normalized);
+        {error, invalid_encoding} -> kura_changeset:add_error(CS, email, ~"is not valid UTF-8")
+    end.
+
+put_email(#kura_changeset{data = #{email := Email}, changes = Changes} = CS, Email) ->
+    CS#kura_changeset{changes = maps:remove(email, Changes)};
+put_email(CS, Email) ->
+    kura_changeset:put_change(CS, email, Email).
+
+reset_confirmation(CS) ->
+    case kura_changeset:get_change(CS, email) of
+        undefined -> CS;
+        _NewEmail -> kura_changeset:put_change(CS, confirmed_at, undefined)
+    end.
+```
+
+The unique index on `email` compares bytes. `Victim@B.com`, `victim@b.com` and `victim@b.com` followed by a newline are three different strings to PostgreSQL, but one mailbox to a person. If the blog stored them as typed, an attacker could register a second account for someone else's address. So the changeset rewrites the address into one canonical form before the database sees it:
+
+- `unicode:characters_to_nfc_binary/1` puts the text in Unicode's composed form (NFC). An `é` can arrive as one code point or as `e` plus a combining accent; after NFC both are the same bytes.
+- `string:casefold/1` is Unicode-aware lowercasing meant for comparisons, so it also folds letters outside ASCII.
+- `string:trim/1` drops surrounding whitespace, including a trailing newline. We trim rather than reject because a pasted address often brings a newline or a space with it, and the person meant the address without it. Login trims too, so both sides agree.
+- `string:casefold/1` raises `badarg` on bytes that are not valid UTF-8, and a request body can contain anything. `characters_to_nfc_binary/1` returns an error tuple for those instead, which becomes an ordinary `email` error rather than a crash.
+
+The normalisation lives in the schema, not in the code that handles the registration form, because every changeset caller gets it then: the form, the JSON API, test fixtures and `email_changeset/2`. `normalize_email/1` is exported so that login can call the same function ([Authentication](../auth-sessions/authentication.md#accounts)). Two copies of the rule would drift apart, and the first difference would be an account nobody can log in to.
+
+The regex ends in `\z`, not `$`. In PCRE, `$` also matches just before a newline at the end of the string, so `^...$` accepts `alice@example.com\n`. `\z` matches only at the very end. Trimming already removed the newline here, but the anchor should say what it means: a format check written with `$` passes the newline through for any caller that forgets to trim.
+
+`put_email/2` drops the change when the normalised address is the one already stored, so typing `Alice@Example.com` over `alice@example.com` changes nothing. Any real change goes through `reset_confirmation/1` in `email_changeset/2`: `confirmed_at` says "we proved this person owns this address", and that proof was for the old address. Without the reset, a confirmed user could switch to someone else's address and still look confirmed.
+
+### Usernames
+
+```erlang
 validate_username(CS) ->
     CS1 = kura_changeset:validate_length(CS, username, [{min, 2}, {max, 30}]),
-    kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+$").
+    kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+\\z").
+```
 
+Usernames appear in URLs and next to every post, so the blog keeps them to lowercase ASCII letters, digits and underscores. That rules out look-alike names built from other scripts. It also makes `validate_length/3` safe to use here: it counts bytes, not characters, and for ASCII the two are the same. Passwords below are not ASCII-only, so they get their own length check.
+
+The `\z` matters here too. With `$`, `alice` followed by a newline passes the format check and becomes a second `alice` that looks identical on the page.
+
+### Passwords
+
+```erlang
 validate_password(CS) ->
-    CS1 = kura_changeset:validate_length(CS, password, [{min, 12}, {max, 72}]),
+    CS1 = validate_password_length(CS, kura_changeset:get_change(CS, password)),
     kura_changeset:validate_confirmation(CS1, password).
+
+validate_password_length(CS, undefined) ->
+    CS;
+validate_password_length(CS, Password) ->
+    case unicode:characters_to_binary(Password) of
+        Password -> check_password_length(CS, string:length(Password));
+        _ -> kura_changeset:add_error(CS, password, ~"is not valid UTF-8")
+    end.
+
+check_password_length(CS, Length) when Length < 12 ->
+    kura_changeset:add_error(CS, password, ~"should be at least 12 character(s)");
+check_password_length(CS, Length) when Length > 1024 ->
+    kura_changeset:add_error(CS, password, ~"should be at most 1024 character(s)");
+check_password_length(CS, _Length) ->
+    CS.
 
 hash_password(#kura_changeset{valid = true} = CS) ->
     case kura_changeset:get_change(CS, password) of
@@ -143,17 +218,20 @@ hash_password(#kura_changeset{valid = true} = CS) ->
     end;
 hash_password(CS) ->
     CS.
+
+scrub_password(#kura_changeset{changes = Changes, params = Params} = CS) ->
+    Secrets = [password, password_confirmation],
+    CS#kura_changeset{
+        changes = maps:without(Secrets, Changes),
+        params = maps:without(Secrets, Params)
+    }.
 ```
 
-There is one changeset per use case. Registration may set email, username and password; a profile update may only touch the username; changing the role is a separate, admin-only operation. Splitting them keeps each allow-list as small as it can be.
-
+- The length rule counts characters. Kura's `validate_length/3` counts bytes (it calls `byte_size/1` on a binary), and in UTF-8 a Japanese character is three bytes and an emoji four. With bytes, four emoji would pass a 12 minimum and a 40-character Japanese passphrase would fail a 72 maximum. `string:length/1` counts what a person sees as characters (grapheme clusters). It is only defined for valid UTF-8, so `unicode:characters_to_binary/1` checks that first: a valid binary comes back unchanged.
+- The minimum is 12 because length is what makes a password hard to guess. The maximum is not about security: 72 is a limit of bcrypt, which ignores everything after the 72nd byte. `nova_auth` hashes with PBKDF2, which uses the whole password, so the blog allows long passphrases and only caps them at 1024 characters so a single request cannot hand the hasher megabytes.
 - `validate_confirmation(CS, password)` requires `password_confirmation` in the params to equal `password`.
 - `hash_password/1` only runs on a valid changeset, so we never spend time hashing a password that is about to be rejected. `nova_auth_password:hash/1` comes from `nova_auth` (add it to `deps` and to `applications` in `blog.app.src`) and produces a salted PBKDF2-SHA256 hash.
-- `password` is virtual, so the plain text stays in the changeset and is never written.
-
-```admonish note
-`validate_length` counts bytes, not characters. A 30-character username in a non-Latin script can fail `{max, 30}`. The blog's username format is ASCII anyway.
-```
+- `scrub_password/1` runs last, on every path. `password` is virtual, so it is never written, but `cast/4` put the plain text in `changes`, and `params` keeps everything the client sent. A changeset travels: `blog_repo:insert/1` hands it back as `{error, CS}` for "email already taken", a controller may log it, and a crash report prints it whole. Once the hash is computed (or the changeset is known to be invalid) nothing needs the plain text, so the scrub removes both keys from both maps. Kura has no function to delete a change, so it updates the `#kura_changeset{}` record directly.
 
 ## Constraints
 
@@ -262,7 +340,23 @@ post_changeset_ignores_fields_not_cast(_Config) ->
     false = maps:is_key(id, Changes).
 ```
 
-Tests that insert (like the unique email check) run inside a sandbox transaction that is rolled back after each test; the [next chapter](crud.md#testing-against-the-database) shows the setup.
+Tests that insert (like the unique email check) run inside a sandbox transaction that is rolled back after each test; the [next chapter](crud.md#testing-against-the-database) shows the setup. The unique email test also checks that the `{error, CS}` it gets back holds no password:
+
+```erlang
+unique_email_becomes_changeset_error(_Config) ->
+    {ok, _} = blog_repo:insert(blog_user:registration_changeset(#{}, registration(#{}))),
+    {error, CS} = blog_repo:insert(
+        blog_user:registration_changeset(#{}, registration(#{~"username" => ~"alice2"}))
+    ),
+    [{email, ~"has already been taken"}] = CS#kura_changeset.errors,
+    Secrets = [password, password_confirmation],
+    0 = map_size(maps:with(Secrets, CS#kura_changeset.changes)),
+    0 = map_size(maps:with(Secrets, CS#kura_changeset.params)).
+```
+
+```admonish tip title="One failing insert per test"
+A failed statement aborts the transaction it runs in, and in a sandboxed test that is the test's own transaction: every later query in the same test fails with "current transaction is aborted". That is why `email_is_unique_after_normalisation` and `trailing_newline_is_trimmed` are two tests rather than one.
+```
 
 ---
 

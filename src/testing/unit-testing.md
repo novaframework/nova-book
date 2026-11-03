@@ -107,7 +107,7 @@ metadata_is_validated_as_an_embed_test() ->
 
 The test pins a detail worth knowing: Kura reports an embed's errors under the embed's own field names, at the top level of the changeset, not under `metadata`. An API client cannot tell a post field from an embed field with the same name.
 
-Some changeset cases still belong in Common Test. `unique_email_becomes_changeset_error` in `blog_data_changeset_SUITE` needs the database's unique index, so it stays there.
+Some changeset cases still belong in Common Test. `unique_email_becomes_changeset_error` in `blog_data_changeset_SUITE` needs the database's unique index, so it stays there, and so do `email_is_unique_after_normalisation` (`Victim@B.com` then `victim@b.com`), `trailing_newline_is_trimmed` and `email_change_clears_confirmed_at`, which reads the row back after the update.
 
 ## Fixtures: `setup` and `foreach`
 
@@ -119,7 +119,10 @@ registration_test_() ->
         fun hashes_a_valid_password/0,
         fun never_casts_the_role/0,
         fun rejects_bad_input/0,
-        fun skips_hashing_when_invalid/0
+        fun skips_hashing_when_invalid/0,
+        fun scrubs_the_password_when_valid/0,
+        fun scrubs_the_password_when_invalid/0,
+        fun counts_password_characters_not_bytes/0
     ]}.
 
 fast_hashing() ->
@@ -140,6 +143,27 @@ never_casts_the_role() ->
 `{setup, Setup, Cleanup, Tests}` runs `Setup` once around all the tests, and its result is passed to `Cleanup`. `{foreach, Setup, Cleanup, Tests}` runs them around each test. The tests are named functions (`fun hashes_a_valid_password/0`), which keeps the fixture readable and lets a failure point at a real function name.
 
 `never_casts_the_role` is a security test: registration must ignore a `role` in the form, or anyone could sign up as an admin.
+
+The password tests are security tests too. A changeset that comes back as an error is exactly the one that gets logged, so the scrub is checked on the invalid path as well as the valid one:
+
+```erlang
+scrubs_the_password_when_invalid() ->
+    BadEmail = blog_user:registration_changeset(#{}, registration(#{~"email" => ~"nope"})),
+    ?assertNot(BadEmail#kura_changeset.valid),
+    assert_no_password(BadEmail),
+    Mismatch = blog_user:password_changeset(#{id => 1}, #{
+        ~"password" => ~"a brand new passphrase", ~"password_confirmation" => ~"a different one"
+    }),
+    ?assertNot(Mismatch#kura_changeset.valid),
+    assert_no_password(Mismatch).
+
+assert_no_password(#kura_changeset{changes = Changes, params = Params}) ->
+    Secrets = [password, password_confirmation],
+    ?assertEqual(#{}, maps:with(Secrets, Changes)),
+    ?assertEqual(#{}, maps:with(Secrets, Params)).
+```
+
+`counts_password_characters_not_bytes` pins the length rule with inputs where bytes and characters disagree: four emoji (16 bytes) are too short, and a 40-character Japanese passphrase (120 bytes) is accepted. The email rules have their own generator, `email_test_()`, and `email_change_test_()` checks that a new address clears `confirmed_at` while retyping the same one in capitals changes nothing.
 
 ## Policies
 
