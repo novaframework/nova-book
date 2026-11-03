@@ -7,7 +7,8 @@
     create/1,
     update/1,
     delete/1,
-    create_comment/1
+    create_comment/1,
+    update_tags/1
 ]).
 
 index(Req) ->
@@ -25,7 +26,7 @@ index(Req) ->
     end.
 
 show(#{bindings := #{~"id" := Id}}) ->
-    case blog_posts:get_post(Id, [author, {comments, [author]}]) of
+    case blog_posts:get_post(Id, [author, tags, {comments, [author]}]) of
         {ok, Post} -> {json, blog_json:post(Post)};
         {error, not_found} -> not_found()
     end.
@@ -77,6 +78,19 @@ create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
         {_, {error, not_found}} ->
             {json, 422, #{}, #{errors => #{user_id => [~"does not exist"]}}}
     end.
+
+update_tags(#{bindings := #{~"id" := Id}, json := #{~"tags" := Names}}) when is_list(Names) ->
+    case blog_posts:get_post(Id) of
+        {ok, Post} ->
+            case blog_posts:tag_post(Post, Names) of
+                {ok, Tagged} -> {json, blog_json:post(Tagged)};
+                {error, #kura_changeset{} = CS} -> unprocessable(CS)
+            end;
+        {error, not_found} ->
+            not_found()
+    end;
+update_tags(_Req) ->
+    {json, 400, #{}, #{error => ~"expected a tags list"}}.
 
 current_author(#{json := #{~"user_id" := UserId}}) when is_integer(UserId) ->
     blog_repo:get(blog_user, UserId);

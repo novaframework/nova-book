@@ -11,6 +11,7 @@ post(Post) ->
         status => maps:get(status, Post),
         user_id => maps:get(user_id, Post),
         published_at => datetime(maps:get(published_at, Post)),
+        metadata => metadata(maps:get(metadata, Post)),
         inserted_at => datetime(maps:get(inserted_at, Post))
     }).
 
@@ -25,12 +26,24 @@ comment(Comment) ->
 with_loaded(Record, Json) ->
     Loaded = [
         {Key, loaded(Key, maps:get(Key, Record))}
-     || Key <- [author, comments], maps:is_key(Key, Record)
+     || Key <- [author, comments, tags], maps:is_key(Key, Record)
     ],
     maps:merge(Json, maps:from_list(Loaded)).
 
 loaded(author, Author) -> user(Author);
-loaded(comments, Comments) -> [comment(C) || C <- Comments].
+loaded(comments, Comments) -> [comment(C) || C <- Comments];
+loaded(tags, Tags) -> lists:sort([maps:get(name, T) || T <- Tags]).
+
+metadata(undefined) ->
+    null;
+metadata(Metadata) ->
+    #{
+        Field => null_if_undefined(maps:get(Field, Metadata, undefined))
+     || Field <- kura_schema:field_names(blog_post_metadata)
+    }.
+
+null_if_undefined(undefined) -> null;
+null_if_undefined(Value) -> Value.
 
 user(User) ->
     #{

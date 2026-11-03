@@ -9,21 +9,27 @@
     update_post/2,
     delete_post/1,
     add_comment/3,
-    import_post/2
+    import_post/2,
+    tag_post/2,
+    ensure_tags/1,
+    tagged/1
 ]).
 
 list_posts(Params) ->
     Types = #{
-        page => integer, page_size => integer, status => {enum, [draft, published, archived]}
+        page => integer,
+        page_size => integer,
+        status => {enum, [draft, published, archived]},
+        tag => string
     },
-    CS = kura_changeset:cast(Types, #{}, Params, [page, page_size, status]),
+    CS = kura_changeset:cast(Types, #{}, Params, [page, page_size, status, tag]),
     CS1 = kura_changeset:validate_number(CS, page, [{greater_than, 0}]),
     CS2 = kura_changeset:validate_number(CS1, page_size, [
         {greater_than, 0}, {less_than_or_equal_to, 50}
     ]),
     case kura_changeset:apply_action(CS2, list) of
         {ok, Filters} ->
-            Query = filter_by_status(kura_query:from(blog_post), Filters),
+            Query = filter_by_tag(filter_by_status(kura_query:from(blog_post), Filters), Filters),
             Newest = kura_query:order_by(Query, [{inserted_at, desc}, {id, desc}]),
             kura_paginator:paginate(blog_repo, Newest, #{
                 page => maps:get(page, Filters, 1),
@@ -37,6 +43,22 @@ filter_by_status(Query, #{status := Status}) ->
     kura_query:where(Query, {status, atom_to_binary(Status)});
 filter_by_status(Query, #{}) ->
     Query.
+
+filter_by_tag(Query, #{tag := Tag}) ->
+    kura_query:where(Query, {id, in, {subquery, tagged_post_ids(Tag)}});
+filter_by_tag(Query, #{}) ->
+    Query.
+
+tagged_post_ids(TagName) ->
+    TagIds = kura_query:select(kura_query:where(kura_query:from(blog_tag), {name, TagName}), [id]),
+    PostTags = kura_query:where(kura_query:from(blog_post_tag), {tag_id, in, {subquery, TagIds}}),
+    kura_query:select(PostTags, [post_id]).
+
+tagged(TagName) ->
+    Query = kura_query:where(
+        kura_query:from(blog_post), {id, in, {subquery, tagged_post_ids(TagName)}}
+    ),
+    blog_repo:all(kura_query:preload(Query, [tags])).
 
 get_post(Id) ->
     case kura_types:cast(id, Id) of
@@ -70,3 +92,25 @@ import_post(#{id := AuthorId}, Params) ->
     CS1 = kura_changeset:put_change(CS, user_id, AuthorId),
     CS2 = kura_changeset:cast_assoc(CS1, comments, #{with => fun blog_comment:import_changeset/2}),
     blog_repo:insert(CS2).
+
+tag_post(Post, Names) ->
+    case ensure_tags(Names) of
+        {ok, Tags} ->
+            CS = kura_changeset:cast(blog_post, Post, #{}, []),
+            blog_repo:update(kura_changeset:put_assoc(CS, tags, Tags));
+        {error, _} = Error ->
+            Error
+    end.
+
+ensure_tags([]) ->
+    {ok, []};
+ensure_tags(Names) ->
+    Changesets = [blog_tag:changeset(#{}, #{name => Name}) || Name <- lists:usort(Names)],
+    case [CS || #kura_changeset{valid = false} = CS <- Changesets] of
+        [Invalid | _] ->
+            {error, Invalid};
+        [] ->
+            Rows = [kura_changeset:apply_changes(CS) || CS <- Changesets],
+            {ok, _} = blog_repo:insert_all(blog_tag, Rows, #{on_conflict => {name, nothing}}),
+            blog_repo:all(kura_query:where(kura_query:from(blog_tag), {name, in, Names}))
+    end.
