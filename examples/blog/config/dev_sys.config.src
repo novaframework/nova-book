@@ -14,6 +14,7 @@
          }}
      ]}
  ]},
+ {blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}]},
  {nova, [
      {use_stacktrace, true},
      {environment, dev},
