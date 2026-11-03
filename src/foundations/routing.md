@@ -290,7 +290,7 @@ Static routes accept any HTTP method and use the group's `security`, so keep the
 
 ## Error routes
 
-An integer in the path position registers a handler for that status code. Nova uses it whenever it produces that status itself: a path that matches no route, a controller that crashes (`500`), a `{status, Code}` return and so on.
+An integer in the path position registers a handler for that status code. Nova uses it whenever it produces that status itself: a path that matches no route, a controller that crashes (`500`) and so on. A controller that returns `{status, Code}` does not reach it; that reply goes out as written, with an empty body (see [Error Handling](../building-api/error-handling.md#which-errors-reach-a-status-handler)).
 
 Nova ships its own 404 handler, but it is worth replacing. In 0.18.1 its JSON variant encodes its message as a list of character codes (`{"message":[82,101,115,...]}`). The blog's handler answers in HTML or JSON depending on the `accept` header:
 
