@@ -112,7 +112,7 @@ top_commented(Limit) ->
     ).
 
 published() ->
-    kura_query:where(kura_query:from(blog_post), {status, ~"published"}).
+    kura_query:where(live_posts(), {status, ~"published"}).
 
 live_posts() ->
     kura_query:where(kura_query:from(blog_post), {deleted_at, is_nil}).

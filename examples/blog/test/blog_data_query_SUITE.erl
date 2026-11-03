@@ -15,6 +15,7 @@
     full_text_search/1,
     cursor_pagination/1,
     streaming_in_batches/1,
+    soft_deleted_posts_are_not_counted_or_streamed/1,
     raw_sql/1
 ]).
 
@@ -32,6 +33,7 @@ all() ->
         full_text_search,
         cursor_pagination,
         streaming_in_batches,
+        soft_deleted_posts_are_not_counted_or_streamed,
         raw_sql
     ].
 
@@ -148,6 +150,18 @@ streaming_in_batches(Config) ->
     ok = file:close(Io),
     {ok, Bin} = file:read_file(Path),
     [~"Routing in Nova", ~"Site news", ~"Supervision trees"] =
+        lists:sort(binary:split(Bin, ~"\n", [global, trim])).
+
+soft_deleted_posts_are_not_counted_or_streamed(Config) ->
+    [_, _, _, News] = ?config(posts, Config),
+    {ok, _} = blog_posts:delete_post(News),
+    {ok, 2} = blog_stats:published_count(),
+    Path = filename:join(?config(priv_dir, Config), "live_titles.txt"),
+    {ok, Io} = file:open(Path, [write]),
+    ok = blog_stats:export_titles(Io),
+    ok = file:close(Io),
+    {ok, Bin} = file:read_file(Path),
+    [~"Routing in Nova", ~"Supervision trees"] =
         lists:sort(binary:split(Bin, ~"\n", [global, trim])).
 
 raw_sql(Config) ->
