@@ -4,14 +4,14 @@
 
 ---
 
-# Part I — Foundations
+# Part I - Foundations
 
 - [Your First Nova Application](foundations/create-app.md)
 - [Routing](foundations/routing.md)
 - [Controllers & Responses](foundations/controllers.md)
 - [Plugins & Middleware](foundations/plugins.md)
 
-# Part II — Data Layer with Kura
+# Part II - Data Layer with Kura
 
 - [Database Setup](data-layer/setup.md)
 - [Schemas & Migrations](data-layer/schemas-migrations.md)
@@ -23,24 +23,24 @@
 - [Transactions & Bulk Operations](data-layer/transactions-bulk.md)
 - [Data Safety](data-layer/data-safety.md)
 
-# Part III — Authentication & Sessions
+# Part III - Authentication & Sessions
 
 - [Sessions](auth-sessions/sessions.md)
 - [Authentication](auth-sessions/authentication.md)
 - [Authorization](auth-sessions/authorization.md)
 
-# Part IV — Views & Templates
+# Part IV - Views & Templates
 
 - [ErlyDTL Templates](views-templates/templates.md)
 - [Building Pages](views-templates/building-pages.md)
 
-# Part V — Building APIs
+# Part V - Building APIs
 
 - [JSON APIs with Generators](building-api/json-api.md)
 - [API Documentation](building-api/openapi-tools.md)
 - [Error Handling](building-api/error-handling.md)
 
-# Part VI — Real-Time with Arizona
+# Part VI - Real-Time with Arizona
 
 - [Arizona Fundamentals](arizona/fundamentals.md)
 - [Live Views](arizona/live-views.md)
@@ -48,13 +48,13 @@
 - [Events & Interactivity](arizona/events.md)
 - [Live Navigation](arizona/live-navigation.md)
 
-# Part VII — Real-Time Infrastructure
+# Part VII - Real-Time Infrastructure
 
 - [WebSockets](real-time/websockets.md)
 - [Pub/Sub](real-time/pubsub.md)
 - [Building a Live Feature](real-time/live-feature.md)
 
-# Part VIII — Email with Hikyaku
+# Part VIII - Email with Hikyaku
 
 - [Sending Email](email/sending-email.md)
 - [Transactional Email](email/transactional-email.md)
