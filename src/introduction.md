@@ -33,7 +33,7 @@ The finished application is in [`examples/blog`](https://github.com/novaframewor
 ```admonish info title="Prerequisites"
 Before starting, make sure you have:
 
-- **Erlang/OTP 28 or newer** - install it with [mise](https://mise.jdx.dev/) (recommended) or your system package manager. The examples are tested on OTP 29.
+- **Erlang/OTP 29** - install it with [mise](https://mise.jdx.dev/) (recommended) or your system package manager. Nova, Kura and Shigoto run on OTP 28, but Arizona (Part VI) needs OTP 29, and the companion app is tested on OTP 29.
 - **rebar3** 3.25 or newer - also installable with mise
 - **Docker** - for running PostgreSQL with Docker Compose
 - A text editor and a terminal

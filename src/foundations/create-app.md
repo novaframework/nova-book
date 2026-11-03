@@ -4,7 +4,7 @@ The fastest way to start a Nova project is the `rebar3_nova` plugin. It adds a p
 
 ## Installing the rebar3 plugin
 
-You need Erlang/OTP 28 or newer and rebar3. If you do not have them yet, the [Erlang Essentials](../appendix/erlang-essentials.md#installing-erlang-and-rebar3) appendix shows how to install both with mise.
+You need Erlang/OTP 29 and rebar3 (Nova itself runs on OTP 28; Arizona in Part VI needs 29, so start on 29). If you do not have them yet, the [Erlang Essentials](../appendix/erlang-essentials.md#installing-erlang-and-rebar3) appendix shows how to install both with mise.
 
 `rebar3_nova` is published on Hex. Register it as a global plugin by adding it to `~/.config/rebar3/rebar.config` (create the file if it does not exist):
 
@@ -96,7 +96,7 @@ blog
 The generated `rebar.config` depends on `nova` from Hex and lists `rebar3_nova` again as a *project* plugin, fetched from the GitHub `master` branch. Inside the project that copy wins over your global one, so `rebar3 nova ...` in the project directory runs whatever is on `master` at the time you first fetched it. If you prefer a released version, change the entry to `{rebar3_nova, "~> 0.13"}`.
 
 ```admonish note
-`.tool-versions` pins Erlang 28.0.4 and rebar 3.25.0 for mise and asdf. Anything from OTP 28 up works for this book; bump or delete the file if you already have a newer toolchain.
+`.tool-versions` pins Erlang 28.0.4 and rebar 3.25.0 for mise and asdf. The book uses OTP 29 and rebar3 3.27; bump the pins or delete the file if mise or asdf would otherwise install the older toolchain.
 ```
 
 ## Running the application

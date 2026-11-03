@@ -5,7 +5,7 @@ So far the blog renders HTML on the server and sends complete pages to the brows
 This part of the book adds Arizona to the blog. We start with a counter, the "hello world" of live views, and use it to see how the pieces fit. The following chapters build the live post editor, components, events and navigation.
 
 ```admonish warning title="Arizona needs OTP 29"
-The rest of the book runs on OTP 28 or newer, but Arizona 0.4, `arizona_cowboy` and `arizona_nova` all declare `minimum_otp_vsn` 29. Check with `erl -noshell -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().'` before you add them.
+This is why the book asks for OTP 29 from the start: Nova, Kura and Shigoto run on OTP 28, but Arizona 0.4, `arizona_cowboy` and `arizona_nova` all declare `minimum_otp_vsn` 29. Check with `erl -noshell -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().'` before you add them.
 ```
 
 ## How Arizona works
