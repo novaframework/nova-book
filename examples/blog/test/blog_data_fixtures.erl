@@ -6,6 +6,7 @@
 start() ->
     ok = application:set_env(nova_auth, pbkdf2_iterations, 1000),
     {ok, _} = application:ensure_all_started(blog),
+    [#{app := blog}] = nova_sup:get_started_applications(),
     {ok, _} = application:ensure_all_started(inets),
     kura_sandbox:start().
 
