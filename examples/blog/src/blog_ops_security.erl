@@ -11,7 +11,7 @@ require_token(Req) ->
             {false, 401, #{~"www-authenticate" => ~"X-Ops-Token"}, ~"unauthorized\n"}
     end.
 
-matches(Given, Expected) when is_binary(Given), is_binary(Expected) ->
+matches(Given, Expected) when is_binary(Given), is_binary(Expected), Expected =/= ~"" ->
     crypto:hash_equals(crypto:hash(sha256, Given), crypto:hash(sha256, Expected));
 matches(_Given, _Expected) ->
     false.

@@ -11,7 +11,8 @@
     bad_token_on_a_public_read_is_401/1,
     live_pages_reject_a_revoked_token/1,
     live_pages_ignore_a_cached_actor_without_a_token/1,
-    live_websocket_rejects_a_revoked_token/1
+    live_websocket_rejects_a_revoked_token/1,
+    empty_ops_token_refuses_everyone/1
 ]).
 
 all() ->
@@ -23,7 +24,8 @@ all() ->
         bad_token_on_a_public_read_is_401,
         live_pages_reject_a_revoked_token,
         live_pages_ignore_a_cached_actor_without_a_token,
-        live_websocket_rejects_a_revoked_token
+        live_websocket_rejects_a_revoked_token,
+        empty_ops_token_refuses_everyone
     ].
 
 init_per_suite(Config) ->
@@ -118,6 +120,18 @@ live_websocket_rejects_a_revoked_token(Config) ->
     ?assertEqual(
         {error, 302}, blog_ws_client:connect("/live/ws?_az_path=/live/editor", Cookie)
     ).
+
+empty_ops_token_refuses_everyone(_Config) ->
+    {ok, Configured} = application:get_env(blog, ops_token),
+    ok = application:set_env(blog, ops_token, ~""),
+    try
+        {ok, {{_, Status, _}, _, _}} = httpc:request(
+            get, {blog_data_fixtures:url("/ops/status"), [{"x-ops-token", ""}]}, [], []
+        ),
+        ?assertEqual(401, Status)
+    after
+        application:set_env(blog, ops_token, Configured)
+    end.
 
 post_path(#{id := Id}) ->
     "/api/posts/" ++ integer_to_list(Id).

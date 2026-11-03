@@ -14,16 +14,23 @@
          }}
      ]}
  ]},
- {blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}]},
+ {blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}, {metrics_port, 9464}, {cors_origins, [~"http://localhost:5173"]}]},
  {nova, [
      {use_stacktrace, true},
      {environment, dev},
      {cowboy_configuration, #{
          port => 8080,
-         stream_handlers => [nova_stream_h, blog_session_h, cowboy_compress_h, cowboy_stream_h],
+         stream_handlers => [
+             blog_otel_h,
+             nova_stream_h,
+             blog_session_h,
+             cowboy_compress_h,
+             cowboy_stream_h
+         ],
          middleware_handlers => [
              arizona_cowboy_middleware,
              nova_router,
+             blog_otel_middleware,
              nova_plugin_handler,
              nova_security_handler,
              nova_handler,
@@ -33,8 +40,10 @@
      {dev_mode, true},
      {bootstrap_application, blog},
      {plugins, [
+         {pre_request, blog_request_logger, #{}},
          {pre_request, nova_request_plugin, #{decode_json_body => true,
-                                              read_urlencoded_body => true}}
+                                              read_urlencoded_body => true}},
+         {post_request, blog_request_logger, #{}}
      ]}
  ]},
  {arizona_nova, [
@@ -71,6 +80,15 @@
          {ws, ~"/live/ws", #{}},
          {mcp, ~"/mcp", arizona_dev_mcp, #{allow_remote_access => false}},
          {asset, ~"/assets/arizona", {priv_dir, arizona, "static/assets/js"}}
+     ]}
+ ]},
+ {opentelemetry, [{span_processor, batch}, {traces_exporter, none}]},
+ {opentelemetry_experimental, [
+     {readers, [
+         #{
+             module => otel_metric_reader,
+             config => #{export_interval_ms => 5000, exporter => {blog_prom_exporter, #{}}}
+         }
      ]}
  ]},
  {kura, [

@@ -72,9 +72,14 @@ routes(_Environment) ->
         #{
             prefix => "/api",
             security => fun blog_security:optional_bearer/1,
+            plugins => [
+                {pre_request, blog_cors_plugin, api_cors()},
+                {pre_request, blog_request_logger, #{}},
+                {post_request, blog_request_logger, #{}}
+            ],
             routes => [
-                {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
-                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}}
+                {"/posts", fun blog_posts_controller:index/1, #{methods => [get, options]}},
+                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get, options]}}
             ]
         },
         #{
@@ -196,6 +201,14 @@ html_plugins() ->
         {pre_request, nova_request_plugin, #{read_urlencoded_body => true}},
         {pre_request, nova_csrf_plugin, #{}}
     ].
+
+api_cors() ->
+    #{
+        allow_origins => application:get_env(blog, cors_origins, []),
+        allow_methods => ~"GET",
+        allow_headers => ~"authorization",
+        max_age => 600
+    }.
 
 tag_plugins() ->
     [
