@@ -107,7 +107,8 @@ revoked_token_is_rejected(_Config) ->
 token_requests_share_the_login_rate_limit(_Config) ->
     Wrong = #{email => ~"alice@example.com", password => ~"guess"},
     [{401, _, _, _} = blog_web:post_json(#{}, "/api/tokens", Wrong) || _ <- lists:seq(1, 5)],
-    {429, _, _, _} = blog_web:post_json(#{}, "/api/tokens", Wrong),
+    {429, _, Limited, _} = blog_web:post_json(#{}, "/api/tokens", Wrong),
+    #{~"error" := ~"too many requests"} = json:decode(Limited),
     {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
     {429, _, _, _} = blog_web:post_form(Jar, "/login", [
         {"_csrf_token", blog_web:csrf_token(Form)},
