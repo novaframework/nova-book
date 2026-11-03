@@ -14,7 +14,15 @@
          {use_stacktrace, false},
          {environment, prod},
          {cowboy_configuration, #{
-                                  port => 8080
+                                  port => 8080,
+                                  middleware_handlers => [
+                                      arizona_cowboy_middleware,
+                                      nova_router,
+                                      nova_plugin_handler,
+                                      nova_security_handler,
+                                      nova_handler,
+                                      nova_plugin_handler
+                                  ]
                                  }},
          {dev_mode, false},
          {bootstrap_application, blog}, %% Bootstraps the application
@@ -23,6 +31,41 @@
          {plugins, [
                     {pre_request, nova_request_plugin, #{decode_json_body => true}}
                    ]}
-        ]}
+        ]},
+ {arizona_nova, [
+     {routes, [
+         {live, ~"/live/counter", blog_live_counter, #{layouts => [{blog_live_layout, render}]}},
+         {live, ~"/live/editor", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [{blog_live_middleware, require_user}]
+         }},
+         {live, ~"/live/editor/:id", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, own_post}
+             ]
+         }},
+         {live, ~"/live/posts/:id", blog_live_post, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, current_user},
+                 {blog_live_middleware, published_post},
+                 {arizona_middleware, fetch_flash}
+             ]
+         }},
+         {live, ~"/live/dashboard/:section", blog_live_dashboard, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings}
+             ]
+         }},
+         {ws, ~"/live/ws", #{}},
+         {asset, ~"/assets/arizona", {priv_dir, arizona, "static/assets/js"}}
+     ]}
+ ]}
   %% Please change your app.src-file instead if you intend to add app-specific configurations
 ].

@@ -71,8 +71,11 @@ create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
     case {blog_posts:get_post(Id), current_author(Req)} of
         {{ok, Post}, {ok, Author}} ->
             case blog_posts:add_comment(Post, Author, Params) of
-                {ok, Comment} -> {json, 201, #{}, blog_api_json:comment(Comment)};
-                {error, #kura_changeset{} = CS} -> unprocessable(CS)
+                {ok, Comment} ->
+                    ok = blog_notify:comment_created(Post, Author, Comment),
+                    {json, 201, #{}, blog_api_json:comment(Comment)};
+                {error, #kura_changeset{} = CS} ->
+                    unprocessable(CS)
             end;
         {{error, not_found}, _} ->
             not_found();
