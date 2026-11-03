@@ -2,7 +2,7 @@
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0, indexes/0]).
+-export([table/0, fields/0, indexes/0, associations/0]).
 -export([
     registration_changeset/2,
     profile_changeset/2,
@@ -33,6 +33,12 @@ indexes() ->
     [
         {[email], #{unique => true}},
         {[username], #{unique => true}}
+    ].
+
+associations() ->
+    [
+        #kura_assoc{name = posts, type = has_many, schema = blog_post, foreign_key = user_id},
+        #kura_assoc{name = comments, type = has_many, schema = blog_comment, foreign_key = user_id}
     ].
 
 registration_changeset(Data, Params) ->

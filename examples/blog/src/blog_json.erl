@@ -1,10 +1,10 @@
 -module(blog_json).
 -include_lib("kura/include/kura.hrl").
 
--export([post/1, user/1, errors/1, datetime/1]).
+-export([post/1, comment/1, user/1, errors/1, datetime/1]).
 
 post(Post) ->
-    #{
+    with_loaded(Post, #{
         id => maps:get(id, Post),
         title => maps:get(title, Post),
         body => maps:get(body, Post),
@@ -12,7 +12,25 @@ post(Post) ->
         user_id => maps:get(user_id, Post),
         published_at => datetime(maps:get(published_at, Post)),
         inserted_at => datetime(maps:get(inserted_at, Post))
-    }.
+    }).
+
+comment(Comment) ->
+    with_loaded(Comment, #{
+        id => maps:get(id, Comment),
+        body => maps:get(body, Comment),
+        user_id => maps:get(user_id, Comment),
+        inserted_at => datetime(maps:get(inserted_at, Comment))
+    }).
+
+with_loaded(Record, Json) ->
+    Loaded = [
+        {Key, loaded(Key, maps:get(Key, Record))}
+     || Key <- [author, comments], maps:is_key(Key, Record)
+    ],
+    maps:merge(Json, maps:from_list(Loaded)).
+
+loaded(author, Author) -> user(Author);
+loaded(comments, Comments) -> [comment(C) || C <- Comments].
 
 user(User) ->
     #{

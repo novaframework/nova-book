@@ -6,7 +6,8 @@
     show/1,
     create/1,
     update/1,
-    delete/1
+    delete/1,
+    create_comment/1
 ]).
 
 index(Req) ->
@@ -24,7 +25,7 @@ index(Req) ->
     end.
 
 show(#{bindings := #{~"id" := Id}}) ->
-    case blog_posts:get_post(Id) of
+    case blog_posts:get_post(Id, [author, {comments, [author]}]) of
         {ok, Post} -> {json, blog_json:post(Post)};
         {error, not_found} -> not_found()
     end.
@@ -62,6 +63,19 @@ delete(#{bindings := #{~"id" := Id}}) ->
             {status, 204};
         {error, not_found} ->
             not_found()
+    end.
+
+create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
+    case {blog_posts:get_post(Id), current_author(Req)} of
+        {{ok, Post}, {ok, Author}} ->
+            case blog_posts:add_comment(Post, Author, Params) of
+                {ok, Comment} -> {json, 201, #{}, blog_json:comment(Comment)};
+                {error, #kura_changeset{} = CS} -> unprocessable(CS)
+            end;
+        {{error, not_found}, _} ->
+            not_found();
+        {_, {error, not_found}} ->
+            {json, 422, #{}, #{errors => #{user_id => [~"does not exist"]}}}
     end.
 
 current_author(#{json := #{~"user_id" := UserId}}) when is_integer(UserId) ->

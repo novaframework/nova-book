@@ -4,9 +4,12 @@
 -export([
     list_posts/1,
     get_post/1,
+    get_post/2,
     create_post/2,
     update_post/2,
-    delete_post/1
+    delete_post/1,
+    add_comment/3,
+    import_post/2
 ]).
 
 list_posts(Params) ->
@@ -41,6 +44,12 @@ get_post(Id) ->
         _ -> {error, not_found}
     end.
 
+get_post(Id, Preloads) ->
+    case get_post(Id) of
+        {ok, Post} -> {ok, blog_repo:preload(blog_post, Post, Preloads)};
+        {error, not_found} -> {error, not_found}
+    end.
+
 create_post(#{id := AuthorId}, Params) ->
     CS = blog_post:changeset(#{}, Params),
     blog_repo:insert(kura_changeset:put_change(CS, user_id, AuthorId)).
@@ -50,3 +59,14 @@ update_post(Post, Params) ->
 
 delete_post(Post) ->
     blog_repo:delete(kura_changeset:cast(blog_post, Post, #{}, [])).
+
+add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
+    CS = blog_comment:changeset(#{}, Params),
+    CS1 = kura_changeset:put_change(CS, post_id, PostId),
+    blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)).
+
+import_post(#{id := AuthorId}, Params) ->
+    CS = blog_post:changeset(#{}, Params),
+    CS1 = kura_changeset:put_change(CS, user_id, AuthorId),
+    CS2 = kura_changeset:cast_assoc(CS1, comments, #{with => fun blog_comment:import_changeset/2}),
+    blog_repo:insert(CS2).
