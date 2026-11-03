@@ -9,6 +9,7 @@
     telemetry_reports_failures/1,
     testing_mode_needs_the_confirmation_key/1,
     queue_process_runs_jobs_in_the_background/1,
+    queues_can_be_paused_and_resumed/1,
     cron_entries_do_not_fire/1,
     tables_are_created_at_boot/1
 ]).
@@ -21,6 +22,7 @@ all() ->
         telemetry_reports_failures,
         testing_mode_needs_the_confirmation_key,
         queue_process_runs_jobs_in_the_background,
+        queues_can_be_paused_and_resumed,
         cron_entries_do_not_fire,
         tables_are_created_at_boot
     ].
@@ -105,6 +107,16 @@ queue_process_runs_jobs_in_the_background(_Config) ->
     after
         ok = shigoto:remove_queue(~"mailers"),
         application:unset_env(shigoto, poll_interval)
+    end.
+
+queues_can_be_paused_and_resumed(_Config) ->
+    {ok, _Pid} = shigoto:add_queue(~"mailers", 2),
+    try
+        ok = shigoto:pause_queue(~"mailers"),
+        ok = shigoto:resume_queue(~"mailers"),
+        {error, not_found} = shigoto:pause_queue(~"nonexistent")
+    after
+        ok = shigoto:remove_queue(~"mailers")
     end.
 
 cron_entries_do_not_fire(_Config) ->

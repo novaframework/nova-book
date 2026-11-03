@@ -1,201 +1,315 @@
 # Transactional Email
 
-In the previous chapter we set up Hikyaku and built email helpers. Now let's wire emails into real application flows — registration confirmation, password reset, and comment notifications.
+Transactional email is mail the application sends because something happened: a comment on your post, an export you asked for, a link to confirm your address. This chapter wires those emails into the blog.
 
-## Registration confirmation
+None of them is sent from the request. Delivering mail means talking to an SMTP relay or an HTTP API, which is slow, sometimes down and sometimes rate limited. If the comment endpoint delivered the notification itself, a slow provider would make posting a comment slow, and a failed delivery would either fail the request (although the comment was saved) or be lost. Instead the request records "this email should be sent" as a **background job**, answers immediately, and a worker process delivers the email later, retrying if the provider has a bad moment.
 
-When a user registers, send a confirmation email with a time-limited token:
+The jobs run on [Shigoto](https://hex.pm/packages/shigoto) (仕事, "work"), a job queue that stores jobs in PostgreSQL. [Part IX](../jobs/background-jobs.md) covers it in depth. This chapter uses three pieces of it: a little configuration, a worker module, and `shigoto:insert/1`.
 
-```erlang
--module(blog_accounts).
--export([register_user/1, confirm_user/1]).
+## Shigoto in two minutes
 
-register_user(Params) ->
-    CS = user:registration_changeset(#{}, Params),
-    case blog_repo:insert(CS) of
-        {ok, User} ->
-            Token = generate_token(maps:get(id, User), <<"confirm">>, 24),
-            blog_emails:confirmation(User, Token),
-            {ok, User};
-        {error, CS1} ->
-            {error, CS1}
-    end.
-
-confirm_user(Token) ->
-    case verify_token(Token, <<"confirm">>) of
-        {ok, UserId} ->
-            {ok, User} = blog_repo:get(user, UserId),
-            CS = kura_changeset:cast(user, User,
-                #{<<"confirmed_at">> => calendar:universal_time()},
-                [confirmed_at]),
-            blog_repo:update(CS);
-        {error, _} ->
-            {error, invalid_token}
-    end.
-```
-
-The email helper:
+Shigoto is already a dependency (`{shigoto, "~> 1.9"}`) and listed in `applications` before `hikyaku` (see the [previous chapter](sending-email.md#adding-hikyaku)). It keeps its jobs in tables in the blog's own database and talks to it through the repo's connection pool. `config/dev_sys.config.src`:
 
 ```erlang
--module(blog_emails).
--export([welcome/1, confirmation/2, password_reset/2, comment_notification/2]).
-
-confirmation(#{email := Email, username := Username}, Token) ->
-    ConfirmUrl = <<"https://myblog.com/confirm?token=", Token/binary>>,
-    E0 = hikyaku_email:new(),
-    E1 = hikyaku_email:from(E0, {<<"Nova Blog">>, <<"noreply@myblog.com">>}),
-    E2 = hikyaku_email:to(E1, Email),
-    E3 = hikyaku_email:subject(E2, <<"Confirm your email">>),
-    E4 = hikyaku_email:text_body(E3,
-        <<"Hi ", Username/binary, ",\n\n",
-          "Click the link below to confirm your email:\n\n",
-          ConfirmUrl/binary, "\n\n",
-          "This link expires in 24 hours.">>),
-    E5 = hikyaku_email:html_body(E4,
-        <<"<h1>Confirm your email</h1>",
-          "<p>Hi ", Username/binary, ",</p>",
-          "<p><a href=\"", ConfirmUrl/binary, "\">Click here to confirm</a></p>",
-          "<p>This link expires in 24 hours.</p>">>),
-    hikyaku_mailer:deliver(blog_mailer, E5).
+{shigoto, [
+    {repo, blog_repo},
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+]},
 ```
 
-## Password reset
+`repo` names the pool; `queues` lists the queues this node works on and how many jobs of each it runs at once. Mail gets its own queue, `mailers`, so a backlog of email never holds up other work.
 
-```erlang
-request_password_reset(Email) ->
-    case blog_repo:get_by(user, [{email, Email}]) of
-        {ok, User} ->
-            Token = generate_token(maps:get(id, User), <<"reset">>, 1),
-            blog_emails:password_reset(User, Token),
-            ok;
-        {error, not_found} ->
-            %% Don't reveal whether the email exists
-            ok
-    end.
+A **worker** is a module with the `shigoto_worker` behaviour. Its `perform/1` gets the job's arguments and returns `ok`, `{error, Reason}` (try again later) or `{snooze, Seconds}` (not now, without counting as a failure). Arguments are stored as JSON, so they come back as a map with binary keys.
 
-reset_password(Token, NewPassword) ->
-    case verify_token(Token, <<"reset">>) of
-        {ok, UserId} ->
-            {ok, User} = blog_repo:get(user, UserId),
-            CS = user:password_changeset(User, #{<<"password">> => NewPassword}),
-            blog_repo:update(CS);
-        {error, _} ->
-            {error, invalid_token}
-    end.
-```
-
-```erlang
-password_reset(#{email := Email, username := Username}, Token) ->
-    ResetUrl = <<"https://myblog.com/reset-password?token=", Token/binary>>,
-    E0 = hikyaku_email:new(),
-    E1 = hikyaku_email:from(E0, {<<"Nova Blog">>, <<"noreply@myblog.com">>}),
-    E2 = hikyaku_email:to(E1, Email),
-    E3 = hikyaku_email:subject(E2, <<"Reset your password">>),
-    E4 = hikyaku_email:text_body(E3,
-        <<"Hi ", Username/binary, ",\n\n",
-          "Click below to reset your password:\n\n",
-          ResetUrl/binary, "\n\n",
-          "This link expires in 1 hour.\n",
-          "If you didn't request this, ignore this email.">>),
-    hikyaku_mailer:deliver(blog_mailer, E4).
-```
+A **job** is inserted with `shigoto:insert/1`: a worker and its arguments. A queue process on some node picks it up, runs the worker, and records the outcome.
 
 ## Comment notifications
 
-Notify post authors when someone comments, triggered from PubSub:
+When Bob comments on Alice's post, Alice gets an email. Three things change.
+
+### The worker
+
+`src/workers/blog_comment_notification_worker.erl`:
 
 ```erlang
--module(blog_notification_worker).
--behaviour(gen_server).
+-module(blog_comment_notification_worker).
+-behaviour(shigoto_worker).
 
--export([start_link/0, init/1, handle_info/2, handle_cast/2, handle_call/3]).
+-export([perform/1, queue/0, max_attempts/0, backoff/2, unique/0]).
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+queue() -> ~"mailers".
 
-init([]) ->
-    nova_pubsub:join(comments),
-    {ok, #{}}.
+max_attempts() -> 5.
 
-handle_info({nova_pubsub, comments, _Sender, "comment_created", Comment}, State) ->
-    PostId = maps:get(post_id, Comment),
-    {ok, Post} = blog_repo:get(post, PostId),
-    Post1 = blog_repo:preload(post, Post, [author]),
-    Comment1 = blog_repo:preload(comment, Comment, [author]),
+backoff(Attempt, _Reason) -> 30 * Attempt.
 
-    %% Don't notify if the author commented on their own post
-    PostAuthorId = maps:get(id, maps:get(author, Post1)),
-    CommentAuthorId = maps:get(user_id, Comment1),
-    case PostAuthorId =/= CommentAuthorId of
-        true -> blog_emails:comment_notification(Post1, Comment1);
-        false -> ok
-    end,
-    {noreply, State};
+unique() -> #{keys => [worker, args], period => infinity}.
 
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-handle_cast(_Msg, State) -> {noreply, State}.
-handle_call(_Req, _From, State) -> {reply, ok, State}.
-```
-
-Add this worker to your supervisor to start automatically.
-
-## Testing email delivery
-
-Use the test adapter to capture emails in tests. Configure `blog_mailer` to use the test adapter in your test environment, with `self()` as the receiving process:
-
-```erlang
-%% In test config or test setup
-%% Override blog_mailer to use the test adapter:
-config() ->
-    #{adapter => hikyaku_adapter_test,
-      pid => self()}.
-```
-
-```erlang
-%% In your test
-test_registration_sends_email(_Config) ->
-    {ok, _User} = blog_accounts:register_user(#{
-        <<"username">> => <<"testuser">>,
-        <<"email">> => <<"test@example.com">>,
-        <<"password">> => <<"password123">>
-    }),
-    receive
-        {hikyaku_email, Email} ->
-            <<"Confirm your email">> = hikyaku_email:get_subject(Email),
+perform(#{~"comment_id" := CommentId}) ->
+    case blog_repo:get(blog_comment, CommentId) of
+        {ok, Comment} ->
+            notify(blog_repo:preload(blog_comment, Comment, [author, {post, [author]}]));
+        {error, not_found} ->
             ok
-    after 1000 ->
-        ct:fail("No email received")
     end.
+
+notify(#{user_id := AuthorId, post := #{user_id := AuthorId}}) ->
+    ok;
+notify(Comment) ->
+    blog_mailer:deliver_from_job(blog_emails:comment_notification(Comment)).
 ```
 
-## Token generation helpers
+- The job carries only the comment's id. The worker loads the comment, its author, its post and the post's author when it runs, so the email uses current data, and no personal data (email addresses, comment text) is stored in the job table.
+- A comment deleted before the job runs is not an error: there is nothing to send, so the job succeeds.
+- Commenting on your own post sends nothing.
+- `queue/0`, `max_attempts/0`, `backoff/2` and `unique/0` are optional callbacks that set defaults for every job of this worker: run on `mailers`, give up after five attempts, wait 30 s, 60 s, 90 s... between them, and never queue two notifications for the same comment. [Part IX](../jobs/background-jobs.md) explains each.
+
+The worker turns the mailer's answer into a job result with `blog_mailer:deliver_from_job/1`:
 
 ```erlang
-generate_token(UserId, Purpose, ExpiryHours) ->
-    Payload = #{user_id => UserId, purpose => Purpose,
-                expires_at => erlang:system_time(second) + ExpiryHours * 3600},
-    base64:encode(term_to_binary(Payload)).
-
-verify_token(Token, ExpectedPurpose) ->
-    try
-        Payload = binary_to_term(base64:decode(Token)),
-        #{user_id := UserId, purpose := Purpose, expires_at := ExpiresAt} = Payload,
-        Now = erlang:system_time(second),
-        case Purpose =:= ExpectedPurpose andalso ExpiresAt > Now of
-            true -> {ok, UserId};
-            false -> {error, expired}
-        end
-    catch _:_ ->
-        {error, invalid}
+deliver_from_job(Email) ->
+    case deliver(Email) of
+        {ok, _Receipt} -> ok;
+        {error, #{status_code := 429}} -> {snooze, 60};
+        {error, Reason} -> {error, Reason}
     end.
 ```
 
-```admonish warning
-This is a simplified token implementation for illustration. In production, use cryptographically signed tokens (e.g. HMAC-SHA256) and store token hashes in the database for revocation.
+A 429 from an HTTP provider means "too many requests": the job snoozes for a minute instead of failing. Any other error fails the attempt and Shigoto retries it with the worker's backoff.
+
+### Enqueueing
+
+All the places the blog enqueues jobs go through one module, `src/blog_jobs.erl`:
+
+```erlang
+comment_added(#{id := CommentId}) ->
+    Job = #{worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}},
+    case shigoto:insert(Job) of
+        {ok, _JobOrConflict} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(#{
+                msg => ~"could not enqueue comment notification",
+                comment_id => CommentId,
+                reason => Reason
+            })
+    end.
+```
+
+`shigoto:insert/1` returns `{ok, Job}`, or `{ok, {conflict, Existing}}` when the worker's `unique/0` finds the same job already queued. A failed enqueue is logged, not returned: the comment is already saved and the request should succeed.
+
+### Calling it
+
+`blog_posts:add_comment/3` from [Part II](../data-layer/associations.md) enqueues the notification once the comment is stored:
+
+```erlang
+add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
+    CS = blog_comment:changeset(#{}, Params),
+    CS1 = kura_changeset:put_change(CS, post_id, PostId),
+    case blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)) of
+        {ok, Comment} ->
+            ok = blog_jobs:comment_added(Comment),
+            {ok, Comment};
+        {error, _} = Error ->
+            Error
+    end.
+```
+
+The controller does not change.
+
+```admonish note title="Why not insert the comment and the job in one transaction?"
+It would be nice if the comment and its job committed together. With Shigoto 1.9.12 on Kura's minato pool they cannot: each library runs its transaction on its own connection, so a job inserted inside `blog_repo:transaction/1` is committed even when the transaction rolls back. [Part IX](../jobs/background-jobs.md#transactions) shows the test that proves it. The blog therefore enqueues after the insert, and the worker is written so that a job for a comment that does not exist is harmless.
+```
+
+### Trying it
+
+With the dev server running, Alice (user 1) has a post, and Bob (user 2) comments:
+
+```shell
+curl -s -i -X POST localhost:8080/api/posts/1/comments \
+  -H 'content-type: application/json' \
+  -d '{"body": "Great post!", "user_id": 2}'
+```
+
+```
+HTTP/1.1 201 Created
+content-length: 78
+content-type: application/json
+...
+
+{"id":1,"body":"Great post!","user_id":2,"inserted_at":"2026-11-03T08:51:09Z"}
+```
+
+The response comes back at once. A few seconds later (queues poll every five seconds by default) the `mailers` queue runs the job and the logger adapter prints the email:
+
+```
+[notice] [2026-11-03T08:51:13.086250+00:00] bcc= cc= html_body="<p>Hi alice,</p>\
+<p><strong>bob</strong> left a comment on your post <em>Hello jobs</em>:</p>\
+<blockquote>Great post!</blockquote>\
+<p><a href=\"http://localhost:8080/api/posts/1\">Read the discussion</a></p>\
+" subject="bob commented on \"Hello jobs\"" text_body="Hi alice,\
+\
+bob left a comment on your post \"Hello jobs\":\
+\
+Great post!\
+\
+Read the discussion: http://localhost:8080/api/posts/1\
+\
+" to="[<<\"alice@example.com\">>]" from="Nova Blog <noreply@blog.test>" msg=hikyaku_email_delivered  ()
+```
+
+## Exporting posts by email
+
+An author can ask for all their posts as a CSV file, delivered by email. Building the file can take a while for a prolific author, so it is a job too, in `src/workers/blog_export_worker.erl`:
+
+```erlang
+-module(blog_export_worker).
+-behaviour(shigoto_worker).
+
+-export([perform/1, queue/0]).
+
+queue() -> ~"mailers".
+
+perform(#{~"user_id" := UserId}) ->
+    case blog_repo:get(blog_user, UserId) of
+        {ok, User} ->
+            Query = kura_query:order_by(
+                kura_query:where(kura_query:from(blog_post), {user_id, UserId}), [{id, asc}]
+            ),
+            {ok, Posts} = blog_repo:all(Query),
+            blog_mailer:deliver_from_job(blog_emails:posts_export(User, posts_csv(Posts)));
+        {error, not_found} ->
+            ok
+    end.
+
+posts_csv(Posts) ->
+    Header = ~"id,title,status,inserted_at\r\n",
+    Rows = [csv_row(Post) || Post <- Posts],
+    iolist_to_binary([Header | Rows]).
+
+csv_row(#{id := Id, title := Title, status := Status, inserted_at := InsertedAt}) ->
+    Fields = [
+        integer_to_binary(Id),
+        csv_field(Title),
+        atom_to_binary(Status),
+        blog_api_json:datetime(InsertedAt)
+    ],
+    [lists:join(~",", Fields), ~"\r\n"].
+
+csv_field(Value) ->
+    <<"\"", (binary:replace(Value, ~"\"", ~"\"\"", [global]))/binary, "\"">>.
+```
+
+The title is the only free text, so it is quoted and its quotes doubled, as CSV requires. `blog_emails:posts_export/2` from the previous chapter attaches the result. Enqueueing is one line in `blog_jobs`:
+
+```erlang
+export_posts(#{id := UserId}) ->
+    shigoto:insert(#{worker => blog_export_worker, args => #{~"user_id" => UserId}}).
+```
+
+Mind the [attachment warning](sending-email.md#attachments): with hikyaku 0.2.0 only the Mailgun adapter delivers the file as a proper attachment.
+
+## Testing mail sent from jobs
+
+Mail is now sent from a worker, in a process the test does not control. Shigoto has three ways to deal with that, and the blog's tests use all of them. Part IX's [Operations](../jobs/operations.md#testing-jobs) chapter describes them in full; here is how they look for email.
+
+**Run the worker directly.** `shigoto:perform_job/2` runs a worker's `perform/1` through Shigoto's normal path, without a database row or a queue, and returns its result. From `test/blog_jobs_workers_SUITE.erl`:
+
+```erlang
+perform_job_sends_the_notification(Config) ->
+    blog_jobs_fixtures:testing(manual),
+    {ok, #{id := CommentId}} = blog_posts:add_comment(
+        ?config(post, Config), ?config(bob, Config), #{~"body" => ~"Nice post"}
+    ),
+    ok = shigoto:perform_job(blog_comment_notification_worker, #{~"comment_id" => CommentId}),
+    #hikyaku_email{
+        to = [#hikyaku_address{address = ~"alice@example.com"}],
+        subject = ~"bob commented on \"Hello jobs\""
+    } = blog_jobs_fixtures:receive_email().
+
+rate_limited_delivery_snoozes(Config) ->
+    blog_jobs_fixtures:testing(manual),
+    blog_jobs_fixtures:mailer(#{
+        adapter => blog_test_mail_adapter, reply => {error, #{status_code => 429}}
+    }),
+    {ok, #{id := CommentId}} = blog_posts:add_comment(
+        ?config(post, Config), ?config(bob, Config), #{~"body" => ~"Nice post"}
+    ),
+    {snooze, 60} =
+        shigoto:perform_job(blog_comment_notification_worker, #{~"comment_id" => CommentId}).
+```
+
+`blog_test_mail_adapter` is a three-line adapter in `test/` that returns whatever its config says, so a test can play a provider that is down or rate limiting:
+
+```erlang
+-module(blog_test_mail_adapter).
+-behaviour(hikyaku_adapter).
+
+-export([deliver/2]).
+
+deliver(_Email, #{reply := Reply}) ->
+    Reply.
+```
+
+**Capture or run on insert.** In `manual` mode `shigoto:insert/1` stores the job in a buffer in the test process instead of the database, and `shigoto_testing:assert_enqueued/1` checks it. In `inline` mode the insert runs the job on the spot. From `test/blog_email_notifications_SUITE.erl`:
+
+```erlang
+comment_enqueues_a_notification(Config) ->
+    blog_jobs_fixtures:testing(manual),
+    {ok, #{id := CommentId}} = blog_posts:add_comment(
+        ?config(post, Config), ?config(bob, Config), #{~"body" => ~"Nice post"}
+    ),
+    shigoto_testing:assert_enqueued(#{
+        worker => blog_comment_notification_worker,
+        queue => ~"mailers",
+        args => #{~"comment_id" => CommentId}
+    }),
+    shigoto_testing:refute_enqueued(#{worker => blog_export_worker}),
+    ok = blog_jobs_fixtures:refute_email().
+
+inline_mode_delivers_on_insert(Config) ->
+    blog_jobs_fixtures:testing(inline),
+    {ok, _} = blog_posts:add_comment(
+        ?config(post, Config), ?config(bob, Config), #{~"body" => ~"Nice post"}
+    ),
+    #hikyaku_email{to = [#hikyaku_address{address = ~"alice@example.com"}]} =
+        blog_jobs_fixtures:receive_email().
+```
+
+**The real thing.** With no testing mode, jobs go to the database. The test posts a comment over HTTP, sees the job waiting, drains the queue and receives the email:
+
+```erlang
+api_comment_is_mailed_by_the_queue(Config) ->
+    #{id := PostId} = ?config(post, Config),
+    #{id := BobId} = ?config(bob, Config),
+    Path = "/api/posts/" ++ integer_to_list(PostId) ++ "/comments",
+    {201, #{~"id" := CommentId}} =
+        blog_data_fixtures:request(post, Path, #{body => ~"Lovely", user_id => BobId}),
+    shigoto_testing:assert_enqueued(#{
+        worker => blog_comment_notification_worker,
+        args => #{~"comment_id" => CommentId},
+        state => ~"available"
+    }),
+    ok = blog_jobs_fixtures:refute_email(),
+    ok = shigoto:drain_queue(~"mailers"),
+    #hikyaku_email{text_body = Text} = blog_jobs_fixtures:receive_email(),
+    {_, _} = binary:match(Text, ~"Lovely"),
+    shigoto_testing:assert_enqueued(#{
+        worker => blog_comment_notification_worker, state => ~"completed"
+    }).
+```
+
+`shigoto:drain_queue/1` runs every due job in a queue in the calling process, so the email arrives in the test process thanks to the explicit `pid` in the test adapter config.
+
+```shell
+rebar3 ct --suite=test/blog_email_notifications_SUITE
+```
+
+```
+%%% blog_email_notifications_SUITE: ...
+All 3 tests passed.
 ```
 
 ---
 
-With email integrated, let's ensure everything works with proper [Unit Testing](../testing/unit-testing.md).
+Background jobs carry more than email. Next, [Part IX](../jobs/background-jobs.md) looks at Shigoto properly: queues, retries, unique and scheduled jobs.

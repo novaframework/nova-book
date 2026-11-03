@@ -13,6 +13,7 @@
     snoozed_job_is_rescheduled/1,
     duplicate_notification_is_a_conflict/1,
     scheduled_publish_waits_until_due/1,
+    dependent_job_waits_for_its_predecessor/1,
     enqueue_inside_kura_transaction_is_not_rolled_back/1,
     shigoto_transaction_groups_job_inserts/1,
     shigoto_transaction_does_not_cover_kura_writes/1,
@@ -31,6 +32,7 @@ all() ->
         snoozed_job_is_rescheduled,
         duplicate_notification_is_a_conflict,
         scheduled_publish_waits_until_due,
+        dependent_job_waits_for_its_predecessor,
         enqueue_inside_kura_transaction_is_not_rolled_back,
         shigoto_transaction_groups_job_inserts,
         shigoto_transaction_does_not_cover_kura_writes,
@@ -155,6 +157,22 @@ scheduled_publish_waits_until_due(Config) ->
     shigoto_testing:assert_enqueued(#{
         worker => blog_publish_worker, args => #{~"post_id" => LaterId}, state => ~"available"
     }).
+
+dependent_job_waits_for_its_predecessor(Config) ->
+    #{id := FirstId} = ?config(post, Config),
+    #{id := SecondId} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Part two"}),
+    {ok, #{id := FirstJob}} = shigoto:insert(#{
+        worker => blog_publish_worker, args => #{~"post_id" => FirstId}
+    }),
+    {ok, #{id := SecondJob}} = shigoto:insert(#{
+        worker => blog_publish_worker,
+        args => #{~"post_id" => SecondId},
+        depends_on => [FirstJob]
+    }),
+    {ok, #{depends_on := [FirstJob]}} = shigoto:get_job(SecondJob),
+    ok = shigoto:drain_queue(~"default"),
+    {ok, #{state := ~"completed", depends_on := []}} = shigoto:get_job(SecondJob),
+    {ok, #{status := published}} = blog_repo:get(blog_post, SecondId).
 
 enqueue_inside_kura_transaction_is_not_rolled_back(_Config) ->
     {aborted, _Job} =

@@ -27,14 +27,9 @@ csv_row(#{id := Id, title := Title, status := Status, inserted_at := InsertedAt}
         integer_to_binary(Id),
         csv_field(Title),
         atom_to_binary(Status),
-        iso8601(InsertedAt)
+        blog_api_json:datetime(InsertedAt)
     ],
     [lists:join(~",", Fields), ~"\r\n"].
 
 csv_field(Value) ->
     <<"\"", (binary:replace(Value, ~"\"", ~"\"\"", [global]))/binary, "\"">>.
-
-iso8601({{Y, Mo, D}, {H, Mi, S}}) ->
-    iolist_to_binary(
-        io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", [Y, Mo, D, H, Mi, S])
-    ).
