@@ -1,159 +1,167 @@
 # Events & Interactivity
 
-Arizona's event system connects user interactions in the browser to server-side Erlang functions. Every click, form submission, and key press travels over the WebSocket to your `handle_event/3` callback.
+Everything a reader does on a live page reaches the server as an *event*: a name, a payload and the view it belongs to. This chapter looks at how events are declared, what their payloads contain, how forms and keys work, and the client-side *effects* that run without a round trip.
 
-## Event handling
+## Declaring events
 
-The `handle_event/3` callback receives three arguments:
+An event is an `az_<domevent>` attribute whose value is a command, usually `arizona_js:push_event/1,2`:
 
 ```erlang
-handle_event(EventName, Params, View) ->
-    {Actions, UpdatedView}.
+{button, [{id, ~"inc"}, {az_click, arizona_js:push_event(~"inc")}], [~"+"]}
 ```
 
-State is managed through the `arizona_stateful` and `arizona_view` APIs — get the state from the view, update bindings, and put it back.
+Any DOM event name works: `az_click`, `az_submit`, `az_input`, `az_change`, `az_keydown`, `az_focusout`, and so on. The parse transform records which `az_*` names a page uses and the client listens for exactly those. The value can also be a list of commands, run in order.
 
-### Return values
+The event goes to the closest view around the element: the page, or a stateful component inside it. That view's `handle_event/3` gets the event name as a binary.
 
-The return is always `{Actions, View}` where `Actions` is a list:
+## Payloads
 
-| Action | Effect |
+`push_event/1` collects a payload from the element that carries the attribute:
+
+| Trigger element | Payload |
 |---|---|
-| `[]` | No actions — just update state and re-render |
-| `[{redirect, Path}]` | Navigate to a new page |
-| `[{dispatch, Event, Payload}]` | Dispatch an event to another component |
+| a `<form>` | all its fields, keyed by `name` |
+| an `<input>`, `<select>` or `<textarea>` | `#{~"value" => ...}` (plus `~"checked"` for checkboxes) |
+| anything else | `#{}` |
 
-## Form handling
+So an `az_input` on the editor's form sends both fields on every keystroke, and an `az_keydown` on an input sends its current value. A plain button inside a form does *not* send the form; only submitting does.
 
-Forms are the most common interactive pattern:
+`push_event/2` adds explicit data, merged over the collected payload. The tag input's remove buttons say which tag:
 
 ```erlang
-render(Bindings) ->
-    CS = arizona_template:get_binding(changeset, Bindings),
-    Errors = arizona_template:get_binding(errors, Bindings),
-    arizona_template:from_html(~"""
-    <form az-submit="save" az-change="validate">
-        <input type="text" name="title"
-               value="{maps:get(title, kura_changeset:apply_changes(CS))}" />
-        {render_error(Errors, title)}
+{az_click, arizona_js:push_event(~"remove_tag", #{~"tag" => Tag})}
+```
 
-        <textarea name="body">{maps:get(body, kura_changeset:apply_changes(CS))}</textarea>
-        {render_error(Errors, body)}
+```erlang
+handle_event(~"remove_tag", #{~"tag" := Tag}, Bindings) ->
+```
 
-        <button type="submit">Save</button>
-    </form>
-    """).
+Payloads arrive as JSON-decoded maps with binary keys. Everything in them came from the browser and can be changed by the user, including the `tag` above and any hidden id you put in a payload. Validate it as you would a request body, and never turn it into an atom.
 
-handle_event(<<"validate">>, Params, View) ->
-    State = arizona_view:get_state(View),
-    CS = post:changeset(#{}, Params),
-    Errors = changeset_errors_to_json(CS),
-    S1 = arizona_stateful:put_binding(changeset, CS, State),
-    S2 = arizona_stateful:put_binding(errors, Errors, S1),
-    {[], arizona_view:update_state(S2, View)};
+## Forms
 
-handle_event(<<"save">>, Params, View) ->
-    CS = post:changeset(#{}, Params),
-    case blog_repo:insert(CS) of
-        {ok, Post} ->
-            {[{redirect, "/posts/" ++ integer_to_list(maps:get(id, Post))}], View};
-        {error, CS1} ->
-            State = arizona_view:get_state(View),
-            S1 = arizona_stateful:put_binding(changeset, CS1, State),
-            S2 = arizona_stateful:put_binding(errors, changeset_errors_to_json(CS1), S1),
-            {[], arizona_view:update_state(S2, View)}
+A live form is a `<form>` with `az_submit`. Arizona prevents the browser's own submit and sends the fields as the payload. The editor's save button submits the post form:
+
+```erlang
+handle_event(~"save", #{~"title" := Title, ~"body" := Body}, Bindings) ->
+    case validate(Title, Body) of
+        Errors when map_size(Errors) =:= 0 ->
+            Saved = Bindings#{post_title => Title, body => Body, errors => #{}},
+            ?send_after(?STATUS_TIMEOUT, clear_status),
+            {Saved#{status => ~"Draft saved"}, #{}, [arizona_js:set_title(Title)]};
+        Errors ->
+            {Bindings#{errors => Errors}, #{}, [arizona_js:focus(first_invalid(Errors))]}
     end.
 ```
 
-The `render_error/2` helper formats a field's error for display:
+with
 
 ```erlang
-render_error(Errors, Field) ->
-    case maps:get(atom_to_binary(Field), Errors, []) of
-        [] -> <<>>;
-        [Msg | _] -> arizona_template:from_html(~"<span class=\"error\">{Msg}</span>")
-    end.
+first_invalid(#{title := _}) -> ~"#post-title";
+first_invalid(#{body := _}) -> ~"#post-body".
 ```
 
-The `az-change` attribute triggers validation on every input change — giving users instant feedback without a form submission.
+On failure the errors render under their fields (through the `field_error` component) and the cursor jumps to the first bad field. On success the status line updates and the browser tab gets the post's title. Saving to the database is added in [Building a Live Feature](../real-time/live-feature.md), once the blog has its schemas.
 
-## Passing values with events
+A few form details:
 
-Use `az-value-*` attributes to send data with events:
+- `az_form_reset` (a bare attribute) clears the form's fields after a successful submit. The tag input uses it so the field is empty for the next tag.
+- Checkbox groups, `<select multiple>` and fields whose name ends in `[]` always arrive as lists, even with one value. Use `name="tags[]"` for a group whose size comes from data.
+- Live events travel over the Origin-checked WebSocket, so live forms need no CSRF token. A form that posts to a Nova controller still needs `nova_csrf_plugin` and its token.
+- Arizona gives every form `method="post"`, so with JavaScript disabled the browser posts to the page's URL. A `live` route only accepts `GET`, so that answers `405` rather than doing anything surprising.
 
-```html
-<button az-click="delete" az-value-id="42" az-value-type="post">Delete</button>
-```
+### Live validation and debouncing
 
-In `handle_event`:
+`az_input` fires on every keystroke. Add `az_debounce` (milliseconds) to send only when typing pauses, or `az_throttle` to send at most once per interval:
 
 ```erlang
-handle_event(<<"delete">>, #{<<"id">> := Id, <<"type">> := Type}, View) ->
+{form,
+    [
+        {id, ~"post-form"},
+        {az_input, arizona_js:push_event(~"preview")},
+        {az_debounce, ~"150"},
+        {az_submit, arizona_js:push_event(~"save")}
+    ],
     ...
 ```
 
+Both attributes are read from the element that carries the event attribute, here the form. The `preview` handler from [Live Views](live-views.md) re-validates on each event, which is how the "title too long" message appears while you type.
+
 ## Key events
 
-```html
-<input type="text" az-keydown="search" az-debounce="300" />
-```
-
-The `az-debounce` attribute delays the event by the specified milliseconds — useful for search-as-you-type to avoid flooding the server.
+`arizona_js:on_key(Key, Command)` wraps a command so it only runs for matching keys. `Key` is a lowercase key name (`enter`, `escape`, `arrowdown`), a list of them, or a regex as a binary. The tag input clears its field on Escape:
 
 ```erlang
-handle_event(<<"search">>, #{<<"value">> := Query}, View) ->
-    Q = kura_query:from(post),
-    Q1 = kura_query:where(Q, {title, ilike, <<"%", Query/binary, "%">>}),
-    {ok, Results} = blog_repo:all(Q1),
-    State = arizona_view:get_state(View),
-    NewState = arizona_stateful:put_binding(results, Results, State),
-    {[], arizona_view:update_state(NewState, View)}.
+{az_keydown, arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
 ```
 
-## Client-side JavaScript hooks
+`reset_form/1` is a client-side command, so this never reaches the server. To send an event on a key, wrap `push_event` instead: `arizona_js:on_key(enter, arizona_js:push_event(~"search"))`. Its payload is the input's value.
 
-Arizona exposes a JavaScript API for pushing events from custom JS code:
+## Effects
 
-```javascript
-// Push an event to the live view
-arizona.pushEvent("my_event", {key: "value"});
+The `arizona_js` builders work in two places:
 
-// Push to a specific component by ID
-arizona.pushEventTo("#comment-form", "submit", {body: "Hello"});
+- **In an attribute**, a command is part of the markup and runs when the event fires. Purely client-side commands run with no round trip. The editor's preview toggle:
 
-// Call an event and get a reply
-const result = await arizona.callEvent("get_data", {id: 42});
+  ```erlang
+  {button, [{id, ~"toggle-preview"}, {az_click, arizona_js:toggle(~"#preview")}], [
+      ~"Show or hide preview"
+  ]},
+  ```
 
-// Call on a specific component
-const result = await arizona.callEventFrom("#search", "search", {q: "nova"});
+- **Returned from a callback** (`handle_event/3`, `handle_info/2`, `handle_update/3`), commands are sent over the WebSocket and run after the patch is applied, like the `focus` and `set_title` from the save handler.
+
+The commonly useful ones:
+
+| Command | Does |
+|---|---|
+| `push_event(Name)`, `push_event(Name, Payload)` | send an event (attributes only) |
+| `toggle(Sel)`, `show(Sel)`, `hide(Sel)` | flip the `hidden` attribute |
+| `add_class/2`, `remove_class/2`, `toggle_class/2` | CSS classes |
+| `set_attr/3`, `remove_attr/2`, `toggle_attr/2` | attributes |
+| `focus(Sel)`, `blur(Sel)`, `select(Sel)`, `scroll_to(Sel)` | first matching element |
+| `reset_form(Sel)` | reset matching forms |
+| `show_modal(Sel)`, `close_modal(Sel)` | open or close a `<dialog>` |
+| `set_title(Title)` | document title |
+| `dispatch_event(Name, Detail)` | a `CustomEvent` on `document` for your own scripts |
+| `navigate(Path)`, `patch(Path)` | live navigation, see [Live Navigation](live-navigation.md) |
+| `copy_to_clipboard(Sel)` | needs a user gesture, so attributes only |
+
+Selectors match all elements for the "broadcast" commands (visibility, classes, attributes, `reset_form`) and the first element for focus, scroll and dialogs.
+
+```admonish tip title="Render state, command one-shots"
+If something on screen follows from state, put it in the template: `{class, [~"post ", ?get(status)]}`. The diff keeps it right, including on the first HTML render. Effects are for things the DOM cannot derive from state: moving focus, the title, scrolling, a transition. That is also why there is no `set_text` command: content belongs to the template.
 ```
 
-On the server:
+### Effects that need cookies: `fetch`
+
+A WebSocket frame cannot set a cookie. When an event must change a cookie without reloading the page, `arizona_js:fetch(Url, Opts)` sends an HTTP request to a controller route and applies the effects it answers with. The blog does not need it: logging in and out are ordinary Nova form posts that load a new page, which also gives the WebSocket the new session.
+
+## Client-only state and hooks
+
+Two more tools, which the blog does not use:
+
+- `?local(Key, Init)` is a slot the server renders once and the browser owns afterwards, changed with `arizona_js:set(Key, Value)`. Good for UI-only state like an open menu.
+- `az_hook` attaches a JavaScript object with `mounted`/`updated`/`destroyed` callbacks to an element, registered through the client's `hooks` export, for integrating a client-side widget.
+
+## Testing events
+
+Unit tests call `handle_event/3` and compare the effects with the same builders:
 
 ```erlang
-handle_event(<<"get_data">>, #{<<"id">> := Id}, View) ->
-    {ok, Post} = blog_repo:get(post, binary_to_integer(Id)),
-    {[{dispatch, <<"get_data_reply">>, #{title => maps:get(title, Post)}}], View}.
+?assertEqual(arizona_js:focus(~"#post-title"), Focus),
 ```
 
-## Actions
-
-Actions let you trigger side effects alongside state updates:
+Over the WebSocket, an event is a JSON array `[ViewId, Event, Payload]`:
 
 ```erlang
-handle_event(<<"publish">>, _Params, View) ->
-    State = arizona_view:get_state(View),
-    Post = arizona_stateful:get_binding(post, State),
-    CS = post:changeset(Post, #{<<"status">> => <<"published">>}),
-    {ok, Updated} = blog_repo:update(CS),
-    NewState = arizona_stateful:put_binding(post, Updated, State),
-    Actions = [
-        {dispatch, <<"post_published">>, #{id => maps:get(id, Updated)}},
-        {redirect, "/posts/" ++ integer_to_list(maps:get(id, Updated))}
-    ],
-    {Actions, arizona_view:update_state(NewState, View)}.
+Preview = #{~"title" => ~"Hello <b>", ~"body" => ~"First words\n\nSecond"},
+ok = blog_ws_client:send_json(Client, [~"editor", ~"preview", Preview]),
+#{~"o" := Ops} = blog_ws_client:recv_json(Client),
 ```
+
+Client-side commands (toggle, reset on Escape, focus) only exist in a browser. The book's examples were also checked with a headless Chrome clicking through the pages; [Testing Real-Time](../testing/testing-realtime.md) shows how.
 
 ---
 
-Next: [Live Navigation](live-navigation.md) — navigating between live views without full page reloads.
+Next, [Live Navigation](live-navigation.md) moves between live pages without reloading.

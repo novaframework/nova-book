@@ -12,6 +12,7 @@
     counter_round_trip_over_websocket/1,
     foreign_origin_websocket_is_refused/1,
     editor_requires_login/1,
+    editor_websocket_requires_login/1,
     editor_mounts_for_session_user/1,
     editor_validates_posts/1,
     editor_splits_paragraphs_and_counts_words/1,
@@ -37,6 +38,7 @@ groups() ->
         ]},
         {editor, [], [
             editor_requires_login,
+            editor_websocket_requires_login,
             editor_mounts_for_session_user,
             editor_validates_posts,
             editor_splits_paragraphs_and_counts_words,
@@ -120,6 +122,9 @@ editor_requires_login(_Config) ->
     {302, Headers, _} = http_get("/live/editor"),
     ?assertEqual("/login", proplists:get_value("location", Headers)).
 
+editor_websocket_requires_login(_Config) ->
+    ?assertEqual({error, 302}, blog_ws_client:connect("/live/ws?_az_path=/live/editor")).
+
 editor_mounts_for_session_user(_Config) ->
     Session = login(#{id => 1, provider => password}),
     {200, _, Body} = http_get("/live/editor", [{"cookie", "session_id=" ++ binary_to_list(Session)}]),
@@ -167,7 +172,13 @@ editor_save_reports_errors_and_focuses(_Config) ->
     Valid = #{~"title" => ~"Hello", ~"body" => ~"Text"},
     {Saved, #{}, [Title]} = blog_live_editor:handle_event(~"save", Valid, Bindings),
     ?assertMatch(#{status := ~"Draft saved", errors := #{}}, Saved),
-    ?assertEqual(arizona_js:set_title(~"Hello"), Title).
+    ?assertEqual(arizona_js:set_title(~"Hello"), Title),
+    receive
+        {arizona_view, ~"editor", clear_status} -> ok
+    after 4000 -> ct:fail(status_not_cleared)
+    end,
+    {Cleared, #{}, []} = blog_live_editor:handle_info(clear_status, Saved),
+    ?assertEqual(~"", maps:get(status, Cleared)).
 
 tag_input_normalizes_and_notifies_parent(_Config) ->
     {Bindings, #{}} = blog_live_tag_input:mount(#{id => ~"tags", notify => ~"editor"}),

@@ -1,163 +1,207 @@
 # Components
 
-Live views render entire pages. Components extract reusable pieces — a comment form, a notification badge, a tag selector. Arizona has two types: **stateful** components (with their own state and event handlers) and **stateless** components (pure render functions).
+The editor from the [previous chapter](live-views.md) is already made of pieces: an error message under each field, a word count, a tag input. Arizona has two kinds of component for that:
+
+- **Stateless** components are functions from props to a template. They have no state and no events of their own.
+- **Stateful** components implement `arizona_stateful`, exactly like a page, and are embedded in a parent's template. They keep their own bindings and handle their own events, inside the parent's live process.
 
 ## Stateless components
 
-A stateless component is a function that takes bindings and returns a template. It has no state and no event handling — just rendering.
+A stateless component is any exported 1-arity function returning `?html(...)`, in a module that includes `arizona_stateless.hrl`. Its argument is the props map, conventionally named `Bindings` so `?get` works. The blog keeps its small pieces in `src/live/blog_live_components.erl`:
 
 ```erlang
--module(blog_components).
--compile({parse_transform, arizona_parse_transform}).
--export([post_card/1, tag_badge/1, user_avatar/1]).
-
-post_card(Bindings) ->
-    Post = maps:get(post, Bindings),
-    arizona_template:from_html(~"""
-    <article class="post-card">
-        <h2>{maps:get(title, Post)}</h2>
-        <p class="meta">by {maps:get(username, maps:get(author, Post))}</p>
-        <p>{binary:part(maps:get(body, Post), 0, min(200, byte_size(maps:get(body, Post))))}...</p>
-    </article>
-    """).
+-module(blog_live_components).
+-include_lib("arizona/include/arizona_stateless.hrl").
+-export([tag_badge/1, field_error/1, word_stats/1]).
 
 tag_badge(Bindings) ->
-    Tag = maps:get(tag, Bindings),
-    arizona_template:from_html(~"""
-    <span class="tag">{maps:get(name, Tag)}</span>
-    """).
+    ?html({span, [{class, ~"tag"}], [~"#", ?get(tag)]}).
 
-user_avatar(Bindings) ->
-    User = maps:get(user, Bindings),
-    arizona_template:from_html(~"""
-    <div class="avatar">
-        <span>{binary:part(maps:get(username, User), 0, 1)}</span>
-    </div>
-    """).
+field_error(Bindings) ->
+    case ?get(error) of
+        undefined -> ?html({span, [{class, ~"field-error"}, hidden], []});
+        Message -> ?html({span, [{class, ~"field-error"}, {role, ~"alert"}], [Message]})
+    end.
+
+word_stats(Bindings) ->
+    ?html(
+        {p, [{class, ~"word-stats"}], [
+            ?get(words), ~" words, about ", ?get(minutes), ~" min read"
+        ]}
+    ).
 ```
 
-Use stateless components in a live view with `arizona_template:render_stateless/3`:
+Embed one with `?stateless(Module, Function, Props)`:
 
 ```erlang
-render(Bindings) ->
-    arizona_template:from_html(~"""
-    <div class="post-list">
-        {arizona_template:render_list(
-            arizona_template:get_binding(posts, Bindings),
-            fun(P) ->
-                arizona_template:render_stateless(blog_components, post_card, #{post => P})
-            end)}
-    </div>
-    """).
+?stateless(blog_live_components, field_error, #{
+    error => maps:get(title, ?get(errors), undefined)
+}),
 ```
+
+The props map is evaluated in the parent, so the parent's slot depends on `errors`; when `errors` changes, the component re-renders with its new props, and when it does not, nothing is sent. `field_error/1` returns one of two templates depending on its props. That is allowed: the diff replaces the element when the shape changes. A helper in the same module can be embedded with `?stateless(fun my_helper/1, Props)`.
+
+Stateless components are also the only kind a layout can contain, because a layout is rendered once and never diffed.
 
 ## Stateful components
 
-A stateful component has its own state, handles its own events, and re-renders independently of its parent. Each stateful component must have a unique `id` binding.
+The tag input needs state of its own: the tags added so far and the last validation error. It handles its own events, and tells the editor when the list changes. `src/live/blog_live_tag_input.erl`:
 
 ```erlang
--module(blog_comment_form).
--compile({parse_transform, arizona_parse_transform}).
--behaviour(arizona_stateful).
-
+-module(blog_live_tag_input).
+-include_lib("arizona/include/arizona_stateful.hrl").
 -export([mount/1, render/1, handle_event/3]).
+-export([normalize/1]).
 
-mount(Bindings) ->
-    arizona_stateful:new(?MODULE, #{
-        id => maps:get(id, Bindings),
-        post_id => maps:get(post_id, Bindings),
-        body => <<>>,
-        error => undefined
-    }).
+-define(MAX_TAGS, 5).
 
+mount(Props) ->
+    {
+        #{
+            id => maps:get(id, Props),
+            notify => maps:get(notify, Props),
+            tags => maps:get(tags, Props, []),
+            error => undefined
+        },
+        #{}
+    }.
+```
+
+`mount/1` receives the props the parent passed. Like a page, the component must keep an `id` and put it on its root element.
+
+```erlang
 render(Bindings) ->
-    arizona_template:from_html(~"""
-    <div id="comment-form">
-        {case arizona_template:get_binding(error, Bindings) of
-            undefined -> ~"";
-            Err -> arizona_template:from_html(~"<p class='error'>{Err}</p>")
-        end}
-        <form az-submit="submit_comment">
-            <textarea name="body" az-change="validate"
-                placeholder="Write a comment...">{arizona_template:get_binding(body, Bindings)}</textarea>
-            <button type="submit">Post Comment</button>
-        </form>
-    </div>
-    """).
+    ?html(
+        {'div', [{id, ?get(id)}, {class, ~"tag-input"}], [
+            {ul, [{class, ~"tags"}], [
+                ?each(
+                    fun(Tag) ->
+                        {li, [], [
+                            ?stateless(blog_live_components, tag_badge, #{tag => Tag}),
+                            {button,
+                                [
+                                    {type, ~"button"},
+                                    {'aria-label', [~"Remove ", Tag]},
+                                    {az_click,
+                                        arizona_js:push_event(~"remove_tag", #{~"tag" => Tag})}
+                                ],
+                                [~"x"]}
+                        ]}
+                    end,
+                    ?get(tags)
+                )
+            ]},
+            {form,
+                [{id, ~"tag-form"}, {az_submit, arizona_js:push_event(~"add_tag")}, az_form_reset],
+                [
+                    {input,
+                        [
+                            {id, ~"tag-name"},
+                            {name, ~"tag"},
+                            {placeholder, ~"Add a tag and press Enter"},
+                            {autocomplete, ~"off"},
+                            {az_keydown,
+                                arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
+                        ],
+                        []}
+                ]},
+            ?stateless(blog_live_components, field_error, #{error => ?get(error)})
+        ]}
+    ).
+```
 
-handle_event(<<"validate">>, #{<<"body">> := Body}, State) ->
-    Error = case byte_size(Body) of
-        0 -> <<"Comment cannot be empty">>;
-        _ -> undefined
-    end,
-    S1 = arizona_stateful:put_binding(body, Body, State),
-    S2 = arizona_stateful:put_binding(error, Error, S1),
-    {[], S2};
-handle_event(<<"submit_comment">>, #{<<"body">> := Body}, State) ->
-    PostId = arizona_stateful:get_binding(post_id, State),
-    CS = comment:changeset(#{}, #{<<"body">> => Body, <<"post_id">> => PostId}),
-    case blog_repo:insert(CS) of
-        {ok, _Comment} ->
-            S1 = arizona_stateful:put_binding(body, <<>>, State),
-            S2 = arizona_stateful:put_binding(error, undefined, S1),
-            {[], S2};
-        {error, _} ->
-            S1 = arizona_stateful:put_binding(error, <<"Failed to post comment">>, State),
-            {[], S1}
+The tag field is its own little form: pressing Enter in a text input submits its form, so `az_submit` gives us "add on Enter" for free, and `az_form_reset` clears the field after a successful submit. Escape clears it without a round trip (more on key events in the [next chapter](events.md)).
+
+An event goes to the closest view around the element that fired it, so clicks and submits inside the tag input reach `blog_live_tag_input:handle_event/3`, not the editor's:
+
+```erlang
+handle_event(~"add_tag", #{~"tag" := Input}, Bindings) ->
+    #{tags := Tags} = Bindings,
+    case normalize(Input) of
+        {ok, _Tag} when length(Tags) >= ?MAX_TAGS ->
+            {Bindings#{error => ~"A post can have at most 5 tags"}, #{}, []};
+        {ok, Tag} ->
+            NewTags = lists:uniq(Tags ++ [Tag]),
+            notify(Bindings, NewTags),
+            {Bindings#{tags => NewTags, error => undefined}, #{}, []};
+        {error, Message} ->
+            {Bindings#{error => Message}, #{}, []}
+    end;
+handle_event(~"remove_tag", #{~"tag" := Tag}, Bindings) ->
+    NewTags = lists:delete(Tag, maps:get(tags, Bindings)),
+    notify(Bindings, NewTags),
+    {Bindings#{tags => NewTags, error => undefined}, #{}, []}.
+
+normalize(Input) ->
+    Tag = string:lowercase(string:trim(Input)),
+    case re:run(Tag, ~"^[a-z0-9-]{1,24}$") of
+        {match, _} -> {ok, Tag};
+        nomatch -> {error, ~"Tags are 1-24 characters: a-z, 0-9 and -"}
     end.
+
+notify(#{notify := ParentId}, Tags) ->
+    arizona_live:send(ParentId, {tags_changed, Tags}).
 ```
 
-Embed a stateful component in a live view with `arizona_template:render_stateful/2`:
+Tags become part of URLs and database rows later, so the component normalises them and refuses anything outside a small alphabet.
+
+### Embedding it
+
+The editor embeds the component with `?stateful(Module, Props)`:
 
 ```erlang
-render(Bindings) ->
-    Post = arizona_template:get_binding(post, Bindings),
-    arizona_template:from_html(~"""
-    <article>
-        <h1>{maps:get(title, Post)}</h1>
-        {arizona_template:render_stateful(blog_comment_form, #{
-            id => ~"comment-form",
-            post_id => maps:get(id, Post)
-        })}
-    </article>
-    """).
+?stateful(blog_live_tag_input, #{id => ~"tags", notify => ?get(id), tags => ?get(tags)}),
 ```
 
-The `id` is required — Arizona uses it to track the component instance across re-renders.
+`id` is required, must be unique on the page, and must stay stable: it is how the diff engine routes patches and events to this instance. Change the id and the component is unmounted and mounted again.
 
-## Slots
+### Talking to the parent
 
-Slots let components accept nested content from their parent, enabling flexible composition:
+Parent and child run in the same live process. A child talks to its parent by sending a message to the parent's view id; `arizona_live:send/2` routes it to that view's `handle_info/2`. The editor passes its own id as the `notify` prop, and handles the message:
 
 ```erlang
--module(blog_card).
--compile({parse_transform, arizona_parse_transform}).
--export([render/1]).
-
-render(Bindings) ->
-    arizona_template:from_html(~"""
-    <div class="card">
-        <div class="card-header">
-            <h3>{maps:get(title, Bindings)}</h3>
-        </div>
-        <div class="card-body">
-            {arizona_template:render_slot(maps:get(inner_content, Bindings))}
-        </div>
-    </div>
-    """).
+handle_info({tags_changed, Tags}, Bindings) ->
+    {Bindings#{tags => Tags}, #{}, []};
 ```
 
-## When to use which
+Passing the id in, instead of hard-coding `~"editor"` in the component, keeps the component reusable.
 
-| Use case | Component type |
-|---|---|
-| Display-only UI pieces (badges, cards, avatars) | Stateless |
-| Interactive forms, toggles, dropdowns | Stateful |
-| UI that needs its own event handling | Stateful |
-| Layout wrappers, formatting helpers | Stateless |
+### Props from the parent: `handle_update/3`
 
-Stateless components re-render when their parent re-renders. Stateful components re-render independently — only when their own state changes.
+When the parent re-renders the `?stateful` slot (here, because `tags` changed), the child receives the new props. Without a `handle_update/3` callback they are merged into the child's bindings, which is what the tag input wants. Export `handle_update(Props, Bindings, Effects)` to transform them instead, for example to keep a local draft when the parent sends a stale value. It must return the `Effects` accumulator it was given, extended with its own effects.
+
+## Choosing between them
+
+| | Stateless | Stateful |
+|---|---|---|
+| Is | a function `Props -> template` | a module with `mount/render/handle_event/...` |
+| State | none, re-rendered from props | its own bindings |
+| Events | handled by the enclosing view | handled by itself |
+| Needs an `id` | no | yes, unique and stable |
+| Allowed in a layout | yes | no |
+
+Start stateless. Reach for a stateful component when a piece of UI has state the parent should not have to manage, like the half-typed tag and its validation error here.
+
+## Lists
+
+`?each(Fun, List)` renders a list. For a short list that is rebuilt whole, like the tags or the preview paragraphs, that is all you need. For long or growing collections, such as a comment thread, Arizona has *streams*: keyed collections where an insert or delete sends only the affected item. The [live comment section](../real-time/live-feature.md) uses one.
+
+## Testing components
+
+Stateful components are tested like pages. The test process plays the parent, so the `notify` message lands in its own mailbox:
+
+```erlang
+tag_input_normalizes_and_notifies_parent(_Config) ->
+    {Bindings, #{}} = blog_live_tag_input:mount(#{id => ~"tags", notify => ~"editor"}),
+    {Added, #{}, []} = blog_live_tag_input:handle_event(~"add_tag", #{~"tag" => ~" Erlang "}, Bindings),
+    ?assertEqual([~"erlang"], maps:get(tags, Added)),
+    receive
+        {arizona_view, ~"editor", {tags_changed, [~"erlang"]}} -> ok
+    after 1000 -> ct:fail(parent_not_notified)
+    end,
+    ...
+```
 
 ---
 
-Next, let's handle user interactions in depth with [Events & Interactivity](events.md).
+Next, [Events & Interactivity](events.md) looks at payloads, forms, keys and client-side effects.

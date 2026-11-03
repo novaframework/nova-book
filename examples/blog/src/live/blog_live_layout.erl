@@ -15,9 +15,18 @@ render(Bindings) ->
             ]},
             {body, [], [
                 {header, [], [
-                    {a, [{href, ~"/"}], [~"Nova Blog"]}
+                    {a, [{href, ~"/"}], [~"Nova Blog"]},
+                    {nav, [], [
+                        {a, [{href, ~"/live/counter"}, az_navigate], [~"Counter"]},
+                        {a, [{href, ~"/live/editor"}, az_navigate], [~"Write"]}
+                    ]}
                 ]},
                 ?inner_content,
+                {aside, [{'aria-label', ~"Latest activity"}], [
+                    {h2, [], [~"Latest"]},
+                    {ul, [{id, ~"notifications"}], []}
+                ]},
+                {script, [{type, ~"module"}, {src, ~"/assets/js/notifications.js"}], []},
                 {script, [{type, ~"module"}], [
                     ~"""
                     import { connect } from '/assets/arizona/arizona.min.js';

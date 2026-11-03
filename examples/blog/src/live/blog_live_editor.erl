@@ -4,6 +4,7 @@
 -export([validate/2, paragraphs/1, word_count/1]).
 
 -define(MAX_TITLE, 120).
+-define(STATUS_TIMEOUT, 3000).
 
 mount(Bindings) ->
     {
@@ -46,6 +47,9 @@ render(Bindings) ->
                 ]},
             ?stateful(blog_live_tag_input, #{id => ~"tags", notify => ?get(id), tags => ?get(tags)}),
             {p, [{id, ~"save-status"}, {role, ~"status"}], [?get(status)]},
+            {button, [{id, ~"toggle-preview"}, {az_click, arizona_js:toggle(~"#preview")}], [
+                ~"Show or hide preview"
+            ]},
             {article, [{id, ~"preview"}], [
                 {h2, [], [?get(post_title)]},
                 ?each(fun(Paragraph) -> {p, [], [Paragraph]} end, paragraphs(?get(body))),
@@ -64,13 +68,16 @@ handle_event(~"save", #{~"title" := Title, ~"body" := Body}, Bindings) ->
     case validate(Title, Body) of
         Errors when map_size(Errors) =:= 0 ->
             Saved = Bindings#{post_title => Title, body => Body, errors => #{}},
+            ?send_after(?STATUS_TIMEOUT, clear_status),
             {Saved#{status => ~"Draft saved"}, #{}, [arizona_js:set_title(Title)]};
         Errors ->
             {Bindings#{errors => Errors}, #{}, [arizona_js:focus(first_invalid(Errors))]}
     end.
 
 handle_info({tags_changed, Tags}, Bindings) ->
-    {Bindings#{tags => Tags}, #{}, []}.
+    {Bindings#{tags => Tags}, #{}, []};
+handle_info(clear_status, Bindings) ->
+    {Bindings#{status => ~""}, #{}, []}.
 
 validate(Title, Body) ->
     TitleErrors =

@@ -9,6 +9,7 @@
     echo_keeps_state_per_connection/1,
     foreign_origin_is_refused/1,
     missing_origin_is_allowed/1,
+    security_auth_data_reaches_handler/1,
     pubsub_delivers_an_envelope/1,
     pubsub_leave_stops_delivery/1,
     notifications_are_pushed_to_clients/1,
@@ -28,7 +29,8 @@ groups() ->
             echo_replies_to_text_frames,
             echo_keeps_state_per_connection,
             foreign_origin_is_refused,
-            missing_origin_is_allowed
+            missing_origin_is_allowed,
+            security_auth_data_reaches_handler
         ]},
         {pubsub, [], [
             pubsub_delivers_an_envelope,
@@ -44,6 +46,11 @@ groups() ->
 init_per_suite(Config) ->
     {ok, _} = application:ensure_all_started(blog),
     {ok, _} = application:ensure_all_started(gun),
+    ok = nova_router:add_routes(blog, #{
+        prefix => "/ws-test",
+        security => fun blog_whoami_ws:authenticate/1,
+        routes => [{"/whoami", blog_whoami_ws, #{protocol => ws}}]
+    }),
     Config.
 
 end_per_suite(_Config) ->
@@ -79,6 +86,13 @@ foreign_origin_is_refused(_Config) ->
 
 missing_origin_is_allowed(_Config) ->
     {ok, Client} = blog_ws_client:connect("/ws/echo"),
+    blog_ws_client:close(Client).
+
+security_auth_data_reaches_handler(_Config) ->
+    ?assertEqual({error, 401}, blog_ws_client:connect("/ws-test/whoami")),
+    {ok, Client} = blog_ws_client:connect("/ws-test/whoami", [{~"x-test-user", ~"42"}]),
+    ok = blog_ws_client:send_text(Client, ~"whoami"),
+    ?assertEqual({text, ~"42"}, blog_ws_client:recv(Client)),
     blog_ws_client:close(Client).
 
 %% Pub/Sub

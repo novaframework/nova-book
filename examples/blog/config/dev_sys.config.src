@@ -44,6 +44,7 @@
              middlewares => [{blog_live_middleware, require_user}]
          }},
          {ws, ~"/live/ws", #{}},
+         {mcp, ~"/mcp", arizona_dev_mcp, #{allow_remote_access => false}},
          {asset, ~"/assets/arizona", {priv_dir, arizona, "static/assets/js"}}
      ]}
  ]},
