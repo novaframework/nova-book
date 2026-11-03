@@ -106,6 +106,13 @@ routes(_Environment) ->
             ]
         },
         #{
+            prefix => "/ops",
+            security => fun blog_ops_security:require_token/1,
+            routes => [
+                {"/jobs", fun blog_jobs_controller:health/1, #{methods => [get]}}
+            ]
+        },
+        #{
             prefix => "",
             security => false,
             routes => [

@@ -12,7 +12,9 @@
         kura,
         kura_postgres,
         nova_auth,
-        nova_json_schemas
+        nova_json_schemas,
+        shigoto,
+        hikyaku
     ]},
     {env, []},
     {modules, []},
