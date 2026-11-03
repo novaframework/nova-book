@@ -57,7 +57,7 @@ first_visit_gets_hardened_cookie(_Config) ->
     #{"session_id" := Id} = Jar,
     "session_id=" ++ Rest = Cookie,
     [Id | Attributes] = [string:trim(A) || A <- string:split(Rest, ";", all)],
-    ?assertEqual(["Path=/", "Secure", "HttpOnly", "SameSite=Lax"], Attributes),
+    ?assertEqual(["HttpOnly", "Path=/", "SameSite=Lax", "Secure"], lists:sort(Attributes)),
     ?assertEqual(43, length(Id)).
 
 returning_visitor_keeps_session(_Config) ->

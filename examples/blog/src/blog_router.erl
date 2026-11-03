@@ -148,12 +148,42 @@ routes(_Environment) ->
             ]
         },
         #{
+            prefix => "/api",
+            security => false,
+            plugins => [
+                {pre_request, nova_request_plugin, #{decode_json_body => true}},
+                {pre_request, blog_require_json_plugin, #{}},
+                {pre_request, nova_json_schemas, #{render_errors => false}}
+            ],
+            routes => [
+                {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
+                {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}},
+                {"/tags", fun blog_tags_controller:create/1, #{
+                    methods => [post], extra_state => #{json_schema => "schemas/tag.json"}
+                }},
+                {"/tags/:id", fun blog_tags_controller:update/1, #{
+                    methods => [put], extra_state => #{json_schema => "schemas/tag.json"}
+                }},
+                {"/tags/:id", fun blog_tags_controller:delete/1, #{methods => [delete]}},
+                {"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "/ws",
+            security => fun blog_ws_security:same_origin/1,
+            routes => [
+                {"/echo", blog_echo_ws, #{protocol => ws}},
+                {"/notifications", blog_notifications_ws, #{protocol => ws}}
+            ]
+        },
+        #{
             prefix => "",
             security => false,
             routes => [
                 {"/robots.txt", "assets/robots.txt", #{mimetype => ~"text/plain"}},
                 {"/assets/[...]", "assets"},
-                {404, fun blog_error_controller:not_found/1, #{}}
+                {404, fun blog_error_controller:not_found/1, #{}},
+                {500, fun blog_error_controller:server_error/1, #{}}
             ]
         }
     ].

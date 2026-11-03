@@ -17,3 +17,6 @@ _build
 *.iml
 rebar3.crashdump
 *~
+priv/openapi/swagger.html
+priv/assets/swagger.html
+priv/assets/openapi.json

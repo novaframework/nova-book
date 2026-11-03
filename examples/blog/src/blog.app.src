@@ -11,7 +11,9 @@
         nova,
         kura,
         kura_postgres,
-        nova_auth
+        nova_auth,
+        nova_json_schemas,
+        arizona_nova
     ]},
     {env, []},
     {modules, []},
