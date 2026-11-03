@@ -52,7 +52,7 @@ The dev config is the one you have been editing since Part I. Trimmed to the par
     }},
     {encryption, #{
         active => 1,
-        keys => [{1, <<"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q=">>}]
+        keys => [{1, ~"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q="}]
     }}
 ]}
 ```
@@ -143,14 +143,7 @@ DB_PORT=five bin/blog foreground
 Kernel pid terminated (application_controller) ("{application_start_failure,blog,{bad_return,{{blog_app,start,[normal,[]]},{'EXIT',{{badmatch,{error,pool_unavailable}},...
 ```
 
-An empty `"${BLOG_OPS_TOKEN}"` is the subtle case: it is a valid empty binary. Until this chapter, `blog_ops_security` compared the SHA-256 of the header with that of the token and nothing else, so with the variable unset a request carrying an empty `x-ops-token:` header matched the empty token. The guard now refuses an empty expected token:
-
-```erlang
-matches(Given, Expected) when is_binary(Given), is_binary(Expected), Expected =/= ~"" ->
-    crypto:hash_equals(crypto:hash(sha256, Given), crypto:hash(sha256, Expected));
-matches(_Given, _Expected) ->
-    false.
-```
+An empty `"${BLOG_OPS_TOKEN}"` is the subtle case: it is a valid empty binary. That is why `matches/2` in [Routing](../foundations/routing.md#security) refuses an empty expected token; without that guard a request with an empty `x-ops-token:` header would match.
 
 `blog_prod_security_SUITE:empty_ops_token_refuses_everyone` pins it: with `ops_token` set to `~""`, an empty header gets 401.
 
@@ -273,14 +266,7 @@ Older guides, the previous edition of this book and the scaffold's configs set `
 
 ## Environment-specific routes
 
-`routes/1` receives the `environment` value, so a router can add routes only in development:
-
-```erlang
-routes(prod) -> routes();
-routes(_Environment) -> routes() ++ dev_routes().
-```
-
-The blog does not need this: its one dev-only endpoint, Arizona's MCP server, is an `arizona_nova` route, and the production config simply leaves it out (which `prod_serves_the_tested_live_routes` checks).
+`routes/1` receives the `environment` value, so a router can add routes only in development ([Routing](../foundations/routing.md#environment-based-routing) shows how). The blog does not need this: its one dev-only endpoint, Arizona's MCP server, is an `arizona_nova` route, and the production config simply leaves it out (which `prod_serves_the_tested_live_routes` checks).
 
 ## VM arguments
 

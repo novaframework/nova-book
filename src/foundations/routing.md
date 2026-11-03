@@ -205,9 +205,9 @@ A security function can return:
 |---|---|
 | `true` | Continue to the controller |
 | `{true, AuthData}` | Continue; the controller finds `AuthData` under `auth_data` in the request |
-| `false` | Stop with `401` |
-| `{false, Headers}` | Stop with `401` and extra headers |
-| `{false, Status, Headers}` | Stop with `Status` and extra headers |
+| `false` | Stop with `401` and an empty body |
+| `{false, Headers}` | Stop with `401`, extra headers and an empty body |
+| `{false, Status, Headers}` | Stop with `Status`, extra headers and an empty body |
 | `{false, Status, Headers, Body}` | Stop with `Status`, headers and a body |
 | `{redirect, Path}` | Stop with a `302` to `Path`; `Path` must be a string (`"/login"`), not a binary |
 
