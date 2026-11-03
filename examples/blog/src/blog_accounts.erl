@@ -2,6 +2,9 @@
 
 -export([
     register/1,
+    confirm/1,
+    request_password_reset/1,
+    reset_password/2,
     authenticate/2,
     issue_token/1,
     user_for_token/1,
@@ -10,9 +13,35 @@
 ]).
 
 register(Params) ->
-    nova_auth_accounts:register(
-        blog_auth, fun blog_user:registration_changeset/2, normalize_email(Params)
-    ).
+    case
+        nova_auth_accounts:register(
+            blog_auth, fun blog_user:registration_changeset/2, normalize_email(Params)
+        )
+    of
+        {ok, User} ->
+            ok = blog_jobs:account_email(confirm, User),
+            {ok, User};
+        {error, _} = Error ->
+            Error
+    end.
+
+confirm(Token) when is_binary(Token) ->
+    nova_auth_confirm:confirm_user(blog_auth, Token);
+confirm(_Token) ->
+    {error, not_found}.
+
+request_password_reset(Email) when is_binary(Email) ->
+    case blog_repo:get_by(blog_user, [{email, string:casefold(string:trim(Email))}]) of
+        {ok, User} -> blog_jobs:account_email(reset, User);
+        {error, not_found} -> ok
+    end;
+request_password_reset(_Email) ->
+    ok.
+
+reset_password(Token, Params) when is_binary(Token) ->
+    nova_auth_reset:reset_password(blog_auth, Token, Params);
+reset_password(_Token, _Params) ->
+    {error, not_found}.
 
 authenticate(Email, Password) when is_binary(Email), is_binary(Password) ->
     nova_auth_accounts:authenticate(blog_auth, string:casefold(string:trim(Email)), Password);

@@ -1,0 +1,10 @@
+{% extends "blog_layout.dtl" %}
+{% block title %}Confirm your email{% endblock %}
+{% block content %}
+<h1>Confirm your email</h1>
+<form method="post" action="/confirm">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="token" value="{{ token }}">
+  <button type="submit">Confirm my email address</button>
+</form>
+{% endblock %}

@@ -1,6 +1,6 @@
 -module(blog_emails).
 
--export([comment_notification/1, posts_export/2]).
+-export([comment_notification/1, posts_export/2, confirmation/2, password_reset/2]).
 
 comment_notification(#{post := Post, author := Commenter, body := Body}) ->
     #{title := Title, author := #{email := To, username := AuthorName}} = Post,
@@ -22,6 +22,24 @@ posts_export(#{email := To, username := Username}, Csv) ->
     ),
     hikyaku_email:attachment(E1, hikyaku_attachment:from_data(~"posts.csv", Csv)).
 
+confirmation(#{email := To, username := Username}, Token) ->
+    Vars = #{
+        username => Username,
+        url => account_link(~"/confirm", Token),
+        days => nova_auth:config(blog_auth, confirm_validity_days)
+    },
+    Email = new(To, ~"Confirm your email address"),
+    with_bodies(Email, blog_email_confirm_txt_dtl, blog_email_confirm_html_dtl, Vars).
+
+password_reset(#{email := To, username := Username}, Token) ->
+    Vars = #{
+        username => Username,
+        url => account_link(~"/password/reset", Token),
+        hours => nova_auth:config(blog_auth, reset_validity_hours)
+    },
+    Email = new(To, ~"Reset your password"),
+    with_bodies(Email, blog_email_reset_txt_dtl, blog_email_reset_html_dtl, Vars).
+
 new(To, Subject) ->
     E0 = hikyaku_email:new(),
     E1 = hikyaku_email:from(E0, application:get_env(blog, mail_from, ~"noreply@blog.test")),
@@ -37,5 +55,11 @@ render(Template, Vars) ->
     iolist_to_binary(IoData).
 
 post_url(#{id := Id}) ->
-    BaseUrl = application:get_env(blog, base_url, ~"http://localhost:8080"),
-    <<BaseUrl/binary, "/api/posts/", (integer_to_binary(Id))/binary>>.
+    <<(base_url())/binary, "/api/posts/", (integer_to_binary(Id))/binary>>.
+
+account_link(Path, Token) ->
+    Query = uri_string:compose_query([{~"token", Token}]),
+    <<(base_url())/binary, Path/binary, "?", Query/binary>>.
+
+base_url() ->
+    application:get_env(blog, base_url, ~"http://localhost:8080").

@@ -185,6 +185,28 @@ routes(_Environment) ->
         },
         #{
             prefix => "",
+            security => fun blog_security:current_user/1,
+            plugins => html_plugins(),
+            routes => [
+                {"/confirm", fun blog_account_controller:confirm_form/1, #{methods => [get]}},
+                {"/confirm", fun blog_account_controller:confirm/1, #{methods => [post]}},
+                {"/password/forgot", fun blog_account_controller:forgot_form/1, #{methods => [get]}},
+                {"/password/reset", fun blog_account_controller:reset_form/1, #{methods => [get]}},
+                {"/password/reset", fun blog_account_controller:reset/1, #{methods => [post]}}
+            ]
+        },
+        #{
+            prefix => "",
+            security => false,
+            plugins => [
+                {pre_request, blog_rate_limit, login_rate_limit()} | html_plugins()
+            ],
+            routes => [
+                {"/password/forgot", fun blog_account_controller:send_reset/1, #{methods => [post]}}
+            ]
+        },
+        #{
+            prefix => "",
             security => false,
             routes => [
                 {"/robots.txt", "assets/robots.txt", #{mimetype => ~"text/plain"}},
