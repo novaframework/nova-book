@@ -58,7 +58,7 @@ login_page_has_csrf_token(_Config) ->
 
 login_without_csrf_token_is_403(_Config) ->
     {200, _, _, Jar} = blog_web:get(#{}, "/login"),
-    {403, _, <<"Forbidden - CSRF token invalid">>, _} =
+    {403, _, ~"Forbidden - CSRF token invalid", _} =
         blog_web:post_form(Jar, "/login", [{"email", "alice@example.com"}, {"password", ?PASSWORD}]).
 
 login_with_wrong_password_rerenders_form(_Config) ->
