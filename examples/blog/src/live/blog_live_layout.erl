@@ -18,7 +18,8 @@ render(Bindings) ->
                     {a, [{href, ~"/"}], [~"Nova Blog"]},
                     {nav, [], [
                         {a, [{href, ~"/live/counter"}, az_navigate], [~"Counter"]},
-                        {a, [{href, ~"/live/editor"}, az_navigate], [~"Write"]}
+                        {a, [{href, ~"/live/editor"}, az_navigate], [~"Write"]},
+                        {a, [{href, ~"/live/dashboard/drafts"}, az_navigate], [~"Your posts"]}
                     ]}
                 ]},
                 ?inner_content,

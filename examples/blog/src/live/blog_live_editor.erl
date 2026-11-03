@@ -7,19 +7,31 @@
 -define(STATUS_TIMEOUT, 3000).
 
 mount(Bindings) ->
+    Post = maps:get(post, Bindings, undefined),
+    Title = field(title, Post),
+    Body = field(body, Post),
     {
         #{
             id => ~"editor",
             title => ~"Write a post",
             current_user => maps:get(current_user, Bindings),
-            post_title => ~"",
-            body => ~"",
-            tags => [],
+            post => Post,
+            initial_title => Title,
+            initial_body => Body,
+            post_title => Title,
+            body => Body,
+            tags => tag_names(Post),
             errors => #{},
             status => ~""
         },
         #{}
     }.
+
+field(_Field, undefined) -> ~"";
+field(Field, Post) -> maps:get(Field, Post).
+
+tag_names(#{tags := Tags}) -> [Name || #{name := Name} <- Tags];
+tag_names(_Post) -> [].
 
 render(Bindings) ->
     ?html(
@@ -34,16 +46,30 @@ render(Bindings) ->
                 ],
                 [
                     {label, [{for, ~"post-title"}], [~"Title"]},
-                    {input, [{id, ~"post-title"}, {name, ~"title"}, {autocomplete, ~"off"}], []},
+                    {input,
+                        [
+                            {id, ~"post-title"},
+                            {name, ~"title"},
+                            {value, ?get(initial_title)},
+                            {autocomplete, ~"off"}
+                        ],
+                        []},
                     ?stateless(blog_live_components, field_error, #{
                         error => maps:get(title, ?get(errors), undefined)
                     }),
                     {label, [{for, ~"post-body"}], [~"Body"]},
-                    {textarea, [{id, ~"post-body"}, {name, ~"body"}, {rows, ~"10"}], []},
+                    {textarea, [{id, ~"post-body"}, {name, ~"body"}, {rows, ~"10"}], [
+                        ?get(initial_body)
+                    ]},
                     ?stateless(blog_live_components, field_error, #{
                         error => maps:get(body, ?get(errors), undefined)
                     }),
-                    {button, [{type, ~"submit"}], [~"Save draft"]}
+                    {button, [{type, ~"submit"}, {name, ~"intent"}, {value, ~"save"}], [
+                        ~"Save draft"
+                    ]},
+                    {button, [{type, ~"submit"}, {name, ~"intent"}, {value, ~"publish"}], [
+                        ~"Publish"
+                    ]}
                 ]},
             ?stateful(blog_live_tag_input, #{id => ~"tags", notify => ?get(id), tags => ?get(tags)}),
             {p, [{id, ~"save-status"}, {role, ~"status"}], [?get(status)]},
@@ -64,15 +90,45 @@ render(Bindings) ->
 handle_event(~"preview", #{~"title" := Title, ~"body" := Body}, Bindings) ->
     Errors = preview_errors(Title, Body),
     {Bindings#{post_title => Title, body => Body, errors => Errors}, #{}, []};
-handle_event(~"save", #{~"title" := Title, ~"body" := Body}, Bindings) ->
+handle_event(~"save", #{~"title" := Title, ~"body" := Body} = Params, Bindings) ->
     case validate(Title, Body) of
         Errors when map_size(Errors) =:= 0 ->
-            Saved = Bindings#{post_title => Title, body => Body, errors => #{}},
-            ?send_after(?STATUS_TIMEOUT, clear_status),
-            {Saved#{status => ~"Draft saved"}, #{}, [arizona_js:set_title(Title)]};
+            Intent = maps:get(~"intent", Params, ~"save"),
+            save(Intent, Bindings#{post_title => Title, body => Body});
         Errors ->
             {Bindings#{errors => Errors}, #{}, [arizona_js:focus(first_invalid(Errors))]}
     end.
+
+save(Intent, #{post := Post, current_user := User, post_title := Title, body := Body} = Bindings) ->
+    case store(Post, User, #{~"title" => Title, ~"body" => Body}) of
+        {ok, Saved} when Intent =:= ~"publish" ->
+            publish(Saved, Bindings);
+        {ok, Saved} ->
+            ?send_after(?STATUS_TIMEOUT, clear_status),
+            {Bindings#{post => Saved, errors => #{}, status => ~"Draft saved"}, #{}, [
+                arizona_js:set_title(Title)
+            ]};
+        {error, stale} ->
+            {Bindings#{status => ~"Someone else changed this post. Reload to see it."}, #{}, []};
+        {error, Changeset} ->
+            Errors = changeset_errors(Changeset),
+            {Bindings#{errors => Errors}, #{}, [arizona_js:focus(first_invalid(Errors))]}
+    end.
+
+store(undefined, User, Params) -> blog_posts:create_post(User, Params);
+store(Post, _User, Params) -> blog_posts:update_post(Post, Params).
+
+publish(Post, #{tags := Tags} = Bindings) ->
+    {ok, Published} = blog_posts:publish(Post, Tags),
+    ok = blog_notify:post_published(Published),
+    Flash = #{~"info" => ~"Your post is live"},
+    {Bindings#{post => Published}, #{}, [
+        arizona_js:navigate(blog_live_post:path(Published), #{flash => Flash})
+    ]}.
+
+changeset_errors(Changeset) ->
+    Errors = blog_api_json:errors(Changeset),
+    #{Field => Message || Field := [Message | _] <- maps:with([title, body], Errors)}.
 
 handle_info({tags_changed, Tags}, Bindings) ->
     {Bindings#{tags => Tags}, #{}, []};
@@ -107,4 +163,5 @@ reading_minutes(Words) ->
     max(1, (Words + 199) div 200).
 
 first_invalid(#{title := _}) -> ~"#post-title";
-first_invalid(#{body := _}) -> ~"#post-body".
+first_invalid(#{body := _}) -> ~"#post-body";
+first_invalid(#{}) -> ~"#post-title".

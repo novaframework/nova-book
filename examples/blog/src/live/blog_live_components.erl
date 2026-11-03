@@ -1,6 +1,6 @@
 -module(blog_live_components).
 -include_lib("arizona/include/arizona_stateless.hrl").
--export([tag_badge/1, field_error/1, word_stats/1]).
+-export([tag_badge/1, field_error/1, word_stats/1, flash/1]).
 
 tag_badge(Bindings) ->
     ?html({span, [{class, ~"tag"}], [~"#", ?get(tag)]}).
@@ -17,3 +17,9 @@ word_stats(Bindings) ->
             ?get(words), ~" words, about ", ?get(minutes), ~" min read"
         ]}
     ).
+
+flash(Bindings) ->
+    case maps:get(~"info", ?get(flash), undefined) of
+        undefined -> ?html({p, [{class, ~"flash"}, hidden], []});
+        Message -> ?html({p, [{class, ~"flash"}, {role, ~"status"}], [Message]})
+    end.

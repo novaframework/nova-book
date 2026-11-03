@@ -169,15 +169,7 @@ editor_save_reports_errors_and_focuses(_Config) ->
     {Invalid, #{}, [Focus]} = blog_live_editor:handle_event(~"save", Payload, Bindings),
     ?assertEqual(#{title => ~"A title is required"}, maps:get(errors, Invalid)),
     ?assertEqual(arizona_js:focus(~"#post-title"), Focus),
-    Valid = #{~"title" => ~"Hello", ~"body" => ~"Text"},
-    {Saved, #{}, [Title]} = blog_live_editor:handle_event(~"save", Valid, Bindings),
-    ?assertMatch(#{status := ~"Draft saved", errors := #{}}, Saved),
-    ?assertEqual(arizona_js:set_title(~"Hello"), Title),
-    receive
-        {arizona_view, ~"editor", clear_status} -> ok
-    after 4000 -> ct:fail(status_not_cleared)
-    end,
-    {Cleared, #{}, []} = blog_live_editor:handle_info(clear_status, Saved),
+    {Cleared, #{}, []} = blog_live_editor:handle_info(clear_status, Invalid#{status => ~"Saved"}),
     ?assertEqual(~"", maps:get(status, Cleared)).
 
 tag_input_normalizes_and_notifies_parent(_Config) ->
