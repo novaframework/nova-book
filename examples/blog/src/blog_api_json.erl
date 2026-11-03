@@ -1,7 +1,7 @@
 -module(blog_api_json).
 -include_lib("kura/include/kura.hrl").
 
--export([post/1, comment/1, user/1, errors/1, datetime/1]).
+-export([post/1, comment/1, user/1, tag/1, errors/1, datetime/1]).
 
 post(Post) ->
     with_loaded(Post, #{
@@ -52,6 +52,17 @@ user(User) ->
         username => maps:get(username, User),
         role => maps:get(role, User)
     }.
+
+tag(Tag) ->
+    Json = #{
+        id => maps:get(id, Tag),
+        name => maps:get(name, Tag),
+        inserted_at => datetime(maps:get(inserted_at, Tag))
+    },
+    case Tag of
+        #{posts := Posts} when is_list(Posts) -> Json#{posts => [post(Post) || Post <- Posts]};
+        #{} -> Json
+    end.
 
 errors(#kura_changeset{errors = Errors}) ->
     Fields = lists:usort([Field || {Field, _} <- Errors]),

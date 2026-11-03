@@ -119,7 +119,7 @@ JSON keys can be atoms or binaries when you encode. Keys of a *decoded* body are
 
 | Return | Response |
 |---|---|
-| `{status, Code}` | Status only. Nova renders its status page for `Code`, so a 404 handler from the router applies. |
+| `{status, Code}` | Status only, with an empty body. The router's status-code handlers are *not* used for a returned status (see [Error Handling](../building-api/error-handling.md#which-errors-reach-a-status-handler)). |
 | `{status, Code, Headers}` | Same, with extra headers |
 | `{status, Code, Headers, Body}` | A binary body is sent as is; a map is encoded as JSON with `content-type: application/json` |
 
@@ -308,8 +308,8 @@ The version comes from git (`{vsn, git}` in `blog.app.src`), so yours will diffe
 | `{ok, Vars, #{view => V, status_code => S, headers => H}}` | Render a named template; all options optional |
 | `{json, Data}` | JSON, 200 (201 for POST) |
 | `{json, Status, Headers, Data}` | JSON with status and headers |
-| `{status, Status}` | Status page |
-| `{status, Status, Headers}` | Status page with headers |
+| `{status, Status}` | Status only, empty body |
+| `{status, Status, Headers}` | Same, with headers |
 | `{status, Status, Headers, Body}` | Binary body, or JSON for a map |
 | `{redirect, Path}` | 302 to `Path` |
 | `{sendfile, Status, Headers, {Offset, Length, Path}, Mime}` | Stream a file |
