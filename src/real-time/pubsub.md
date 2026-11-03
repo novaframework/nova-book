@@ -59,6 +59,7 @@ Rather than scattering channel names through the code, the blog keeps them in on
 ```erlang
 -module(blog_notify).
 -export([channel/0, post_channel/1, broadcast/2, broadcast_post/3]).
+-export([post_published/1, comment_created/3, comment/2]).
 
 channel() ->
     ~"notifications".
@@ -72,6 +73,8 @@ broadcast(Event, Payload) ->
 broadcast_post(PostId, Event, Payload) ->
     nova_pubsub:broadcast(post_channel(PostId), Event, Payload).
 ```
+
+The last three functions name the blog's events. They come up in the [Broadcasting from controllers](#broadcasting-from-controllers) section below.
 
 Two kinds of channel:
 
@@ -215,7 +218,79 @@ ok
 
 ## Broadcasting from controllers
 
-<!-- realtime: filled in after the data layer merge -->
+Events start where data changes. The comments API from [Associations & Preloading](../data-layer/associations.md) is one such place. Once the comment is stored, `blog_posts_controller:create_comment/1` announces it:
+
+```erlang
+create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
+    case {blog_posts:get_post(Id), current_author(Req)} of
+        {{ok, Post}, {ok, Author}} ->
+            case blog_posts:add_comment(Post, Author, Params) of
+                {ok, Comment} ->
+                    ok = blog_notify:comment_created(Post, Author, Comment),
+                    {json, 201, #{}, blog_api_json:comment(Comment)};
+                {error, #kura_changeset{} = CS} -> unprocessable(CS)
+            end;
+```
+
+The event functions in `blog_notify` decide what each channel gets:
+
+```erlang
+post_published(#{id := Id, title := Title}) ->
+    broadcast(~"post_published", #{~"id" => Id, ~"title" => Title}).
+
+comment_created(#{id := PostId, title := PostTitle}, #{username := Author} = User, Comment) ->
+    ok = broadcast_post(PostId, ~"comment_created", comment(Comment, User)),
+    broadcast(~"comment_created", #{
+        ~"post_id" => PostId,
+        ~"post_title" => PostTitle,
+        ~"author" => Author
+    }).
+
+comment(#{id := Id, body := Body, inserted_at := InsertedAt}, #{username := Author}) ->
+    #{id => Id, body => Body, author => Author, inserted_at => blog_api_json:datetime(InsertedAt)}.
+```
+
+One comment produces two events:
+
+- The post's own channel gets the whole comment, in the shape the [live comment section](live-feature.md) renders. That is an Erlang map that never leaves the server.
+- The site-wide feed gets a summary for browsers: who commented on what. It has no comment text, because the feed is not the place to read comments.
+
+Both are built from named fields. Never broadcast a row as it came from the database: a user row holds `hashed_password`, and any field in a payload is one careless `json:encode` away from a browser.
+
+Rules that keep broadcasts honest:
+
+- **Broadcast after the write succeeds**, in the code that knows it succeeded. Inside a `blog_repo:transaction/1` or a `kura_multi`, wait until it has committed: a listener told about a row that was rolled back will show a comment that does not exist.
+- **Keep it in one module.** Event names and payloads are an interface between parts of the app. With `blog_notify` the API controller and the live comment form announce a comment the same way, and a test can check the shape in one place.
+- **A broadcast is fire-and-forget.** `nova_pubsub:broadcast/3` returns `ok` whether there are a hundred listeners or none, and a slow listener does not slow the controller.
+
+The suite checks that the API broadcasts:
+
+```erlang
+api_comments_are_broadcast(Config) ->
+    #{id := PostId} = ?config(post, Config),
+    #{id := BobId} = ?config(bob, Config),
+    ok = nova_pubsub:join(blog_notify:post_channel(PostId)),
+    Path = "/api/posts/" ++ integer_to_list(PostId) ++ "/comments",
+    {201, #{~"id" := CommentId}} =
+        blog_data_fixtures:request(post, Path, #{~"user_id" => BobId, ~"body" => ~"Via the API"}),
+    receive
+        #nova_pubsub{topic = ~"comment_created", payload = #{id := Id, author := Author}} ->
+            ?assertEqual({CommentId, ~"bob"}, {Id, Author})
+    after 2000 -> ct:fail(no_broadcast)
+    end.
+```
+
+The test process joins the channel like any other listener, so the test needs no mocks.
+
+Try it with the feed open in a browser and a published post in the database (the [editor](live-feature.md#saving-and-publishing) publishes one). With post 1 and user 1:
+
+```shell
+curl -s -X POST localhost:8080/api/posts/1/comments \
+  -H 'content-type: application/json' \
+  -d '{"user_id": 1, "body": "From the API"}'
+```
+
+The Latest list shows "alice commented on Hello live" (with your user and post). The `user_id` in the body is the stand-in from [CRUD and the Query Builder](../data-layer/crud.md) that Part III replaces with the logged-in user.
 
 ## Arizona's pub/sub
 

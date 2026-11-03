@@ -37,20 +37,17 @@ render(Bindings) ->
                     ?get(tags)
                 )
             ]},
-            {form,
-                [{id, ~"tag-form"}, {az_submit, arizona_js:push_event(~"add_tag")}, az_form_reset],
-                [
-                    {input,
-                        [
-                            {id, ~"tag-name"},
-                            {name, ~"tag"},
-                            {placeholder, ~"Add a tag and press Enter"},
-                            {autocomplete, ~"off"},
-                            {az_keydown,
-                                arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
-                        ],
-                        []}
-                ]},
+            {form, [{id, ~"tag-form"}, {az_submit, arizona_js:push_event(~"add_tag")}], [
+                {input,
+                    [
+                        {id, ~"tag-name"},
+                        {name, ~"tag"},
+                        {placeholder, ~"Add a tag and press Enter"},
+                        {autocomplete, ~"off"},
+                        {az_keydown, arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
+                    ],
+                    []}
+            ]},
             ?stateless(blog_live_components, field_error, #{error => ?get(error)})
         ]}
     ).
@@ -63,7 +60,9 @@ handle_event(~"add_tag", #{~"tag" := Input}, Bindings) ->
         {ok, Tag} ->
             NewTags = lists:uniq(Tags ++ [Tag]),
             notify(Bindings, NewTags),
-            {Bindings#{tags => NewTags, error => undefined}, #{}, []};
+            {Bindings#{tags => NewTags, error => undefined}, #{}, [
+                arizona_js:reset_form(~"#tag-form")
+            ]};
         {error, Message} ->
             {Bindings#{error => Message}, #{}, []}
     end;

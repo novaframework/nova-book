@@ -174,10 +174,11 @@ editor_save_reports_errors_and_focuses(_Config) ->
 
 tag_input_normalizes_and_notifies_parent(_Config) ->
     {Bindings, #{}} = blog_live_tag_input:mount(#{id => ~"tags", notify => ~"editor"}),
-    {Added, #{}, []} = blog_live_tag_input:handle_event(
+    {Added, #{}, [Reset]} = blog_live_tag_input:handle_event(
         ~"add_tag", #{~"tag" => ~" Erlang "}, Bindings
     ),
     ?assertEqual([~"erlang"], maps:get(tags, Added)),
+    ?assertEqual(arizona_js:reset_form(~"#tag-form"), Reset),
     receive
         {arizona_view, ~"editor", {tags_changed, [~"erlang"]}} -> ok
     after 1000 -> ct:fail(parent_not_notified)

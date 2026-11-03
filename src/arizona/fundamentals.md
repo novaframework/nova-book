@@ -38,6 +38,7 @@ Arizona itself ships no HTTP server. An adapter package provides one, and `arizo
     nova,
     kura,
     kura_postgres,
+    nova_auth,
     arizona_nova
 ]},
 ```
@@ -92,7 +93,7 @@ Paths are binaries. A path an Arizona route claims is answered by Arizona, inclu
 
 When `arizona_nova` starts it mounts these routes on Nova's listener (`nova_listener`, the bootstrap application's). When it stops, before Nova, it drains the live sessions so their browsers reconnect to the next node.
 
-The same `arizona_nova` block goes in `config/test_sys.config` and the production config. A route list that grows is the price of keeping routes in config; the blog's has seven entries by the end of this part.
+The same `arizona_nova` block goes in `config/test_sys.config` and the production config. A route list that grows is the price of keeping routes in config; by the end of this part the blog's has seven entries (eight in development, with the MCP route below).
 
 ## The layout
 
@@ -119,7 +120,8 @@ render(Bindings) ->
                     {a, [{href, ~"/"}], [~"Nova Blog"]},
                     {nav, [], [
                         {a, [{href, ~"/live/counter"}, az_navigate], [~"Counter"]},
-                        {a, [{href, ~"/live/editor"}, az_navigate], [~"Write"]}
+                        {a, [{href, ~"/live/editor"}, az_navigate], [~"Write"]},
+                        {a, [{href, ~"/live/dashboard/drafts"}, az_navigate], [~"Your posts"]}
                     ]}
                 ]},
                 ?inner_content,

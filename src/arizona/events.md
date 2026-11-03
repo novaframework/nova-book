@@ -40,15 +40,14 @@ Payloads arrive as JSON-decoded maps with binary keys. Everything in them came f
 
 ## Forms
 
-A live form is a `<form>` with `az_submit`. Arizona prevents the browser's own submit and sends the fields as the payload. The editor's save button submits the post form:
+A live form is a `<form>` with `az_submit`. Arizona prevents the browser's own submit and sends the fields as the payload. The payload also carries the `name` and `value` of the button that submitted the form, just as a normal form post would. The editor has two submit buttons, `intent=save` and `intent=publish`, and one handler for both:
 
 ```erlang
-handle_event(~"save", #{~"title" := Title, ~"body" := Body}, Bindings) ->
+handle_event(~"save", #{~"title" := Title, ~"body" := Body} = Params, Bindings) ->
     case validate(Title, Body) of
         Errors when map_size(Errors) =:= 0 ->
-            Saved = Bindings#{post_title => Title, body => Body, errors => #{}},
-            ?send_after(?STATUS_TIMEOUT, clear_status),
-            {Saved#{status => ~"Draft saved"}, #{}, [arizona_js:set_title(Title)]};
+            Intent = maps:get(~"intent", Params, ~"save"),
+            save(Intent, Bindings#{post_title => Title, body => Body});
         Errors ->
             {Bindings#{errors => Errors}, #{}, [arizona_js:focus(first_invalid(Errors))]}
     end.
@@ -58,14 +57,25 @@ with
 
 ```erlang
 first_invalid(#{title := _}) -> ~"#post-title";
-first_invalid(#{body := _}) -> ~"#post-body".
+first_invalid(#{body := _}) -> ~"#post-body";
+first_invalid(#{}) -> ~"#post-title".
 ```
 
-On failure the errors render under their fields (through the `field_error` component) and the cursor jumps to the first bad field. On success the status line updates and the browser tab gets the post's title. Saving to the database is added in [Building a Live Feature](../real-time/live-feature.md), once the blog has its schemas.
+On failure the errors render under their fields (through the `field_error` component) and the cursor jumps to the first bad field. Pressing Enter in the title field submits with the first button, so `intent` is `save`; the `maps:get/3` default covers a submit with no button at all. `save/2` writes the post to the database. On success it shows "Draft saved", gives the browser tab the post's title and arms the timer from [Live Views](live-views.md):
+
+```erlang
+        {ok, Saved} ->
+            ?send_after(?STATUS_TIMEOUT, clear_status),
+            {Bindings#{post => Saved, errors => #{}, status => ~"Draft saved"}, #{}, [
+                arizona_js:set_title(Title)
+            ]};
+```
+
+The rest of `save/2`, including publishing, is in [Building a Live Feature](../real-time/live-feature.md).
 
 A few form details:
 
-- `az_form_reset` (a bare attribute) clears the form's fields after a successful submit. The tag input uses it so the field is empty for the next tag.
+- `az_form_reset` (a bare attribute on the form) clears the fields as soon as the event is sent. It does not wait for the server, so a submit the server rejects loses what was typed. To clear a form only when the server accepts it, return `arizona_js:reset_form(Selector)` as an effect instead. The tag input and the comment form both do that.
 - Checkbox groups, `<select multiple>` and fields whose name ends in `[]` always arrive as lists, even with one value. Use `name="tags[]"` for a group whose size comes from data.
 - Live events travel over the Origin-checked WebSocket, so live forms need no CSRF token. A form that posts to a Nova controller still needs `nova_csrf_plugin` and its token.
 - Arizona gives every form `method="post"`, so with JavaScript disabled the browser posts to the page's URL. A `live` route only accepts `GET`, so that answers `405` rather than doing anything surprising.
@@ -109,7 +119,7 @@ The `arizona_js` builders work in two places:
   ]},
   ```
 
-- **Returned from a callback** (`handle_event/3`, `handle_info/2`, `handle_update/3`), commands are sent over the WebSocket and run after the patch is applied, like the `focus` and `set_title` from the save handler.
+- **Returned from a callback** (`handle_event/3`, `handle_info/2`, `handle_update/3`), commands are sent over the WebSocket and run after the patch is applied, like the `focus` and `set_title` from the save handler, or the tag input's `reset_form` after a tag is accepted.
 
 The commonly useful ones:
 
@@ -160,7 +170,7 @@ ok = blog_ws_client:send_json(Client, [~"editor", ~"preview", Preview]),
 #{~"o" := Ops} = blog_ws_client:recv_json(Client),
 ```
 
-Client-side commands (toggle, reset on Escape, focus) only exist in a browser. The book's examples were also checked with a headless Chrome clicking through the pages; [Testing Real-Time](../testing/testing-realtime.md) shows how.
+Client-side commands (toggle, reset on Escape, focus) only exist in a browser. The book's examples were also checked with a headless Chrome clicking through the pages.
 
 ---
 

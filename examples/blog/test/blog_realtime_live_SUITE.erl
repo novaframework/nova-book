@@ -85,6 +85,9 @@ post_page_renders_comments(Config) ->
 only_published_posts_are_shown(Config) ->
     Draft = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Not yet"}),
     ?assertMatch({404, _}, page(Draft)),
+    ?assertEqual(
+        {error, 404}, blog_ws_client:connect("/live/ws?_az_path=" ++ live_path(Draft))
+    ),
     ?assertMatch({404, _}, http_get("/live/posts/999999", [])),
     ?assertMatch({404, _}, http_get("/live/posts/abc", [])).
 

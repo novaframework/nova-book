@@ -31,6 +31,8 @@ word_stats(Bindings) ->
     ).
 ```
 
+[Live Navigation](live-navigation.md#navigating-from-the-server) adds a fourth, `flash/1`, to the same module.
+
 Embed one with `?stateless(Module, Function, Props)`:
 
 ```erlang
@@ -91,26 +93,23 @@ render(Bindings) ->
                     ?get(tags)
                 )
             ]},
-            {form,
-                [{id, ~"tag-form"}, {az_submit, arizona_js:push_event(~"add_tag")}, az_form_reset],
-                [
-                    {input,
-                        [
-                            {id, ~"tag-name"},
-                            {name, ~"tag"},
-                            {placeholder, ~"Add a tag and press Enter"},
-                            {autocomplete, ~"off"},
-                            {az_keydown,
-                                arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
-                        ],
-                        []}
-                ]},
+            {form, [{id, ~"tag-form"}, {az_submit, arizona_js:push_event(~"add_tag")}], [
+                {input,
+                    [
+                        {id, ~"tag-name"},
+                        {name, ~"tag"},
+                        {placeholder, ~"Add a tag and press Enter"},
+                        {autocomplete, ~"off"},
+                        {az_keydown, arizona_js:on_key(escape, arizona_js:reset_form(~"#tag-form"))}
+                    ],
+                    []}
+            ]},
             ?stateless(blog_live_components, field_error, #{error => ?get(error)})
         ]}
     ).
 ```
 
-The tag field is its own little form: pressing Enter in a text input submits its form, so `az_submit` gives us "add on Enter" for free, and `az_form_reset` clears the field after a successful submit. Escape clears it without a round trip (more on key events in the [next chapter](events.md)).
+The tag field is its own little form: pressing Enter in a text input submits its form, so `az_submit` gives us "add on Enter" for free. Escape clears the field without a round trip (more on key events in the [next chapter](events.md)).
 
 An event goes to the closest view around the element that fired it, so clicks and submits inside the tag input reach `blog_live_tag_input:handle_event/3`, not the editor's:
 
@@ -123,7 +122,9 @@ handle_event(~"add_tag", #{~"tag" := Input}, Bindings) ->
         {ok, Tag} ->
             NewTags = lists:uniq(Tags ++ [Tag]),
             notify(Bindings, NewTags),
-            {Bindings#{tags => NewTags, error => undefined}, #{}, []};
+            {Bindings#{tags => NewTags, error => undefined}, #{}, [
+                arizona_js:reset_form(~"#tag-form")
+            ]};
         {error, Message} ->
             {Bindings#{error => Message}, #{}, []}
     end;
@@ -142,6 +143,8 @@ normalize(Input) ->
 notify(#{notify := ParentId}, Tags) ->
     arizona_live:send(ParentId, {tags_changed, Tags}).
 ```
+
+An accepted tag returns a `reset_form` effect, which empties the field for the next tag. A rejected one returns no effect, so the field keeps what was typed and the author can fix it.
 
 Tags become part of URLs and database rows later, so the component normalises them and refuses anything outside a small alphabet.
 
@@ -193,8 +196,11 @@ Stateful components are tested like pages. The test process plays the parent, so
 ```erlang
 tag_input_normalizes_and_notifies_parent(_Config) ->
     {Bindings, #{}} = blog_live_tag_input:mount(#{id => ~"tags", notify => ~"editor"}),
-    {Added, #{}, []} = blog_live_tag_input:handle_event(~"add_tag", #{~"tag" => ~" Erlang "}, Bindings),
+    {Added, #{}, [Reset]} = blog_live_tag_input:handle_event(
+        ~"add_tag", #{~"tag" => ~" Erlang "}, Bindings
+    ),
     ?assertEqual([~"erlang"], maps:get(tags, Added)),
+    ?assertEqual(arizona_js:reset_form(~"#tag-form"), Reset),
     receive
         {arizona_view, ~"editor", {tags_changed, [~"erlang"]}} -> ok
     after 1000 -> ct:fail(parent_not_notified)

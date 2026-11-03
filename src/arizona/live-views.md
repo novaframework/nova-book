@@ -72,6 +72,7 @@ session_user(Req) ->
 - `current_user/2` adds a `current_user` binding, `undefined` for anonymous readers.
 - `require_user/2` redirects anonymous visitors to `/login` and halts. On the WebSocket upgrade a halt refuses the connection.
 - `path_bindings/2` is explained below.
+- [Building a Live Feature](../real-time/live-feature.md) adds two more, `published_post/2` and `own_post/2`, which load posts.
 
 Name the step as a `{Module, Function}` pair on the route. Here is the editor's route in the `arizona_nova` config:
 
@@ -128,22 +129,34 @@ The editor lives at `/live/editor`. It has a form for the title and body, a prev
 -define(STATUS_TIMEOUT, 3000).
 
 mount(Bindings) ->
+    Post = maps:get(post, Bindings, undefined),
+    Title = field(title, Post),
+    Body = field(body, Post),
     {
         #{
             id => ~"editor",
             title => ~"Write a post",
             current_user => maps:get(current_user, Bindings),
-            post_title => ~"",
-            body => ~"",
-            tags => [],
+            post => Post,
+            initial_title => Title,
+            initial_body => Body,
+            post_title => Title,
+            body => Body,
+            tags => tag_names(Post),
             errors => #{},
             status => ~""
         },
         #{}
     }.
+
+field(_Field, undefined) -> ~"";
+field(Field, Post) -> maps:get(Field, Post).
+
+tag_names(#{tags := Tags}) -> [Name || #{name := Name} <- Tags];
+tag_names(_Post) -> [].
 ```
 
-`current_user` comes from `require_user/2`. `title` is read by the layout for the `<title>` element, so the post's own title is `post_title`.
+`current_user` comes from `require_user/2`. `title` is read by the layout for the `<title>` element, so the post's own title is `post_title`. `post` stays `undefined` on `/live/editor`; [Building a Live Feature](../real-time/live-feature.md) adds a `/live/editor/:id` route whose middleware loads an existing post, and saving it to the database.
 
 ### Rendering
 
@@ -161,19 +174,36 @@ render(Bindings) ->
                 ],
                 [
                     {label, [{for, ~"post-title"}], [~"Title"]},
-                    {input, [{id, ~"post-title"}, {name, ~"title"}, {autocomplete, ~"off"}], []},
+                    {input,
+                        [
+                            {id, ~"post-title"},
+                            {name, ~"title"},
+                            {value, ?get(initial_title)},
+                            {autocomplete, ~"off"}
+                        ],
+                        []},
                     ?stateless(blog_live_components, field_error, #{
                         error => maps:get(title, ?get(errors), undefined)
                     }),
                     {label, [{for, ~"post-body"}], [~"Body"]},
-                    {textarea, [{id, ~"post-body"}, {name, ~"body"}, {rows, ~"10"}], []},
+                    {textarea, [{id, ~"post-body"}, {name, ~"body"}, {rows, ~"10"}], [
+                        ?get(initial_body)
+                    ]},
                     ?stateless(blog_live_components, field_error, #{
                         error => maps:get(body, ?get(errors), undefined)
                     }),
-                    {button, [{type, ~"submit"}], [~"Save draft"]}
+                    {button, [{type, ~"submit"}, {name, ~"intent"}, {value, ~"save"}], [
+                        ~"Save draft"
+                    ]},
+                    {button, [{type, ~"submit"}, {name, ~"intent"}, {value, ~"publish"}], [
+                        ~"Publish"
+                    ]}
                 ]},
             ?stateful(blog_live_tag_input, #{id => ~"tags", notify => ?get(id), tags => ?get(tags)}),
             {p, [{id, ~"save-status"}, {role, ~"status"}], [?get(status)]},
+            {button, [{id, ~"toggle-preview"}, {az_click, arizona_js:toggle(~"#preview")}], [
+                ~"Show or hide preview"
+            ]},
             {article, [{id, ~"preview"}], [
                 {h2, [], [?get(post_title)]},
                 ?each(fun(Paragraph) -> {p, [], [Paragraph]} end, paragraphs(?get(body))),
@@ -189,9 +219,10 @@ render(Bindings) ->
 A few things to notice:
 
 - The form's `az_input` fires on every keystroke in any field inside it. Because the attribute sits on the `<form>`, the event's payload is the whole form: `#{~"title" => ..., ~"body" => ...}`. `az_debounce` waits until typing pauses for 150 ms before sending.
-- The inputs have no `value` bound to state. The browser owns what is being typed; the server only reads it from events. Binding a textarea's content to a binding that changes on every keystroke would have the server rewriting the field under the cursor.
+- The fields start from `initial_title` and `initial_body`, which are set once in `mount/1` and never change, so the diff never touches the fields again. After that the browser owns what is being typed and the server only reads it from events. Binding a field to `post_title`, which changes on every keystroke, would have the server rewriting the field under the cursor.
 - `?each(Fun, List)` renders one element per list item. `paragraphs/1` and `word_count/1` are plain functions of `?get(body)`, and that is fine: the slot depends on `body`, so it is recomputed when `body` changes.
 - `?stateless` and `?stateful` embed components, covered next chapter.
+- The two submit buttons share the form. [Events & Interactivity](events.md) shows how the handler tells them apart.
 
 `render/1` must return the `?html(...)` directly. The parse transform adds the view marker and checks the root id only when the template is the body of `render/1`, so do not delegate to a helper (`render(B) -> page(B).`). Helpers that return smaller templates for parts of the page are fine.
 
@@ -241,8 +272,8 @@ Payload keys are binaries, straight from the browser. Match the ones you need an
 What goes over the wire for one preview event is just the changed slots. From the WebSocket test, sending `["editor","preview",{"title":"Hello <b>","body":"First words\n\nSecond"}]`:
 
 ```erlang
-[[0,<<"editor:1O8PEJZ-4">>,<<"Hello <b>">>],
- [10,<<"editor:1O8PEJZ-3">>,
+[[0,<<"editor:DI7P3U-6">>,<<"Hello <b>">>],
+ [10,<<"editor:DI7P3U-5">>,
   [[5,0,
     #{<<"d">> => [<<"First words">>],
       <<"f">> => <<"1CBUKXR">>,
@@ -250,7 +281,7 @@ What goes over the wire for one preview event is just the changed slots. From th
           [<<"<p az=\"1CBUKXR-0\"><!--az:1CBUKXR-0-->">>,
            <<"<!--/az--></p>">>]}],
    [5,0,#{<<"d">> => [<<"Second">>],<<"f">> => <<"1CBUKXR">>}]]],
- [0,<<"editor:1O8PEJZ-3-1-1G5REGA-0">>,<<"3">>]]
+ [0,<<"editor:DI7P3U-5-1-1G5REGA-0">>,<<"3">>]]
 ```
 
 The title is a text op (`0`). The browser sets it as text, so `<b>` shows up literally. The paragraphs are a list patch (`10`) with two inserts (`5`); the second reuses the statics of the first by fingerprint (`f`). The word count is another text op. The form, the labels and the tag input are not touched.
