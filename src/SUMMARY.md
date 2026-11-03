@@ -20,7 +20,8 @@
 - [Associations & Preloading](data-layer/associations.md)
 - [Many-to-Many & Embedded Schemas](data-layer/advanced-data.md)
 - [Advanced Queries](data-layer/advanced-queries.md)
-- [Transactions & Multi](data-layer/transactions-bulk.md)
+- [Transactions & Bulk Operations](data-layer/transactions-bulk.md)
+- [Data Safety](data-layer/data-safety.md)
 
 # Part III — Authentication & Sessions
 

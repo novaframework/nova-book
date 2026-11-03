@@ -70,6 +70,21 @@ routes(_Environment) ->
             ]
         },
         #{
+            prefix => "/api",
+            security => false,
+            routes => [
+                {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+                {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
+                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
+                {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},
+                {"/posts/:id", fun blog_posts_controller:delete/1, #{methods => [delete]}},
+                {"/posts/:id/comments", fun blog_posts_controller:create_comment/1, #{
+                    methods => [post]
+                }},
+                {"/posts/:id/tags", fun blog_posts_controller:update_tags/1, #{methods => [put]}}
+            ]
+        },
+        #{
             prefix => "",
             security => false,
             routes => [

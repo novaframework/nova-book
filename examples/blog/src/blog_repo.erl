@@ -21,7 +21,11 @@
     query/2,
     exists/1,
     reload/2,
-    insert_all/3
+    insert_all/3,
+    soft_delete/1,
+    restore/1,
+    count/1,
+    aggregate/2
 ]).
 
 otp_app() -> blog.
@@ -45,3 +49,7 @@ query(SQL, Params) -> kura_repo_worker:query(?MODULE, SQL, Params).
 exists(Q) -> kura_repo_worker:exists(?MODULE, Q).
 reload(Schema, Record) -> kura_repo_worker:reload(?MODULE, Schema, Record).
 insert_all(Schema, Entries, Opts) -> kura_repo_worker:insert_all(?MODULE, Schema, Entries, Opts).
+soft_delete(CS) -> kura_repo_worker:soft_delete(?MODULE, CS).
+restore(CS) -> kura_repo_worker:restore(?MODULE, CS).
+count(Q) -> kura_repo_worker:count(?MODULE, Q).
+aggregate(Q, Agg) -> kura_repo_worker:aggregate(?MODULE, Q, Agg).

@@ -1,224 +1,269 @@
 # Changesets and Validation
 
-In the previous chapter we defined schemas and generated migrations. Before we can insert or update data, we need to validate it. Kura uses **changesets** — a data structure that tracks what fields changed, validates them, and accumulates errors. No exceptions, no side effects — just data in, data out.
+Data from the outside world (a JSON body, a form, a query string) never goes straight into the database. It goes through a **changeset**: a record that holds the original data, the changes you allowed, their types, and any validation errors. The repo only writes a changeset that is valid.
 
-## The changeset concept
+The flow is always the same:
 
-A changeset takes three inputs:
-1. **Data** — the existing record (or `#{}` for a new one)
-2. **Params** — the incoming data (typically from a request body)
-3. **Allowed fields** — which params are permitted (everything else is ignored)
+1. **Cast**: pick the fields you allow from the params and convert them to the schema types.
+2. **Validate**: check the changes (required, length, format, ...).
+3. **Constrain**: declare which database constraints may fail, so they come back as errors instead of crashes.
+4. **Persist**: hand the changeset to `blog_repo:insert/1` or `update/1`.
 
-It produces a `#kura_changeset{}` record with:
-- `changes` — a map of field → new value
-- `errors` — a list of `{field, message}` tuples
-- `valid` — `true` or `false`
+## A changeset for posts
 
-## Adding changeset functions to schemas
-
-Let's add a `changeset/2` function to the post schema. Update `src/schemas/post.erl`:
+Changeset functions live in the schema module. `blog_post:changeset/2`:
 
 ```erlang
--module(post).
--behaviour(kura_schema).
--include_lib("kura/include/kura.hrl").
-
--export([table/0, fields/0, changeset/2]).
-
-table() -> <<"posts">>.
-
-fields() ->
-    [
-        #kura_field{name = id, type = id, primary_key = true, nullable = false},
-        #kura_field{name = title, type = string, nullable = false},
-        #kura_field{name = body, type = text},
-        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = draft},
-        #kura_field{name = user_id, type = integer},
-        #kura_field{name = inserted_at, type = utc_datetime},
-        #kura_field{name = updated_at, type = utc_datetime}
-    ].
+-export([changeset/2]).
 
 changeset(Data, Params) ->
-    CS = kura_changeset:cast(post, Data, Params, [title, body, status, user_id]),
+    CS = kura_changeset:cast(?MODULE, Data, Params, [title, body, status]),
     CS1 = kura_changeset:validate_required(CS, [title, body]),
     CS2 = kura_changeset:validate_length(CS1, title, [{min, 3}, {max, 200}]),
-    kura_changeset:validate_inclusion(CS2, status, [draft, published, archived]).
-```
+    stamp_published_at(CS2).
 
-Here is what each step does:
-
-1. **`cast/4`** — takes the schema module, existing data, incoming params, and a list of allowed fields. It converts param values to the correct Erlang types (binaries to atoms for enums, binaries to integers for IDs, etc.) and puts them in `changes`.
-2. **`validate_required/2`** — ensures the listed fields are present and non-empty.
-3. **`validate_length/3`** — checks string length constraints.
-4. **`validate_inclusion/3`** — ensures the value is one of the allowed options.
-
-## User changeset with format and unique constraints
-
-Update `src/schemas/user.erl`:
-
-```erlang
--module(user).
--behaviour(kura_schema).
--include_lib("kura/include/kura.hrl").
-
--export([table/0, fields/0, changeset/2]).
-
-table() -> <<"users">>.
-
-fields() ->
-    [
-        #kura_field{name = id, type = id, primary_key = true, nullable = false},
-        #kura_field{name = username, type = string, nullable = false},
-        #kura_field{name = email, type = string, nullable = false},
-        #kura_field{name = password_hash, type = string, nullable = false},
-        #kura_field{name = inserted_at, type = utc_datetime},
-        #kura_field{name = updated_at, type = utc_datetime}
-    ].
-
-changeset(Data, Params) ->
-    CS = kura_changeset:cast(user, Data, Params, [username, email, password_hash]),
-    CS1 = kura_changeset:validate_required(CS, [username, email, password_hash]),
-    CS2 = kura_changeset:validate_format(CS1, email, <<"^[^@]+@[^@]+\\.[^@]+$">>),
-    CS3 = kura_changeset:validate_length(CS2, username, [{min, 2}, {max, 50}]),
-    CS4 = kura_changeset:unique_constraint(CS3, email),
-    kura_changeset:unique_constraint(CS4, username).
-```
-
-New validations:
-
-- **`validate_format/3`** — checks the value against a regex. The email regex ensures it has `@` and a domain.
-- **`unique_constraint/2`** — declares that this field has a unique index in the database. If an insert/update violates the constraint, Kura maps the PostgreSQL error to a friendly changeset error instead of crashing.
-
-```admonish info
-`unique_constraint` does not check uniqueness in Erlang — it tells Kura how to handle the PostgreSQL unique violation error. You still need a unique index on the column, which you would add to a migration.
-```
-
-## Changeset errors as structured data
-
-Errors are a list of `{Field, Message}` tuples on the changeset:
-
-```erlang
-1> CS = post:changeset(#{}, #{}).
-#kura_changeset{valid = false, errors = [{title, <<"can't be blank">>},
-                                          {body, <<"can't be blank">>}], ...}
-
-2> CS#kura_changeset.valid.
-false
-
-3> CS#kura_changeset.errors.
-[{title, <<"can't be blank">>}, {body, <<"can't be blank">>}]
-```
-
-```erlang
-4> CS2 = post:changeset(#{}, #{<<"title">> => <<"Hi">>, <<"body">> => <<"Hello">>}).
-#kura_changeset{valid = false, errors = [{title, <<"should be at least 3 character(s)">>}], ...}
-```
-
-## Working with changeset fields
-
-Kura exports helper functions for reading and modifying changeset data programmatically. These are essential when building multi-step changeset pipelines.
-
-| Function | Purpose |
-|---|---|
-| `get_field(CS, Field)` | Returns value from `changes`, falling back to `data` |
-| `get_change(CS, Field)` | Returns value only if it is in `changes` |
-| `put_change(CS, Field, Value)` | Adds or overwrites a value in `changes` |
-| `add_error(CS, Field, Msg)` | Appends a custom error and sets `valid = false` |
-| `apply_changes(CS)` | Merges `changes` into `data`, returns the merged map (no persistence) |
-
-A common use case is hashing a password before storing it:
-
-```erlang
--export([registration_changeset/2]).
-
-registration_changeset(Data, Params) ->
-    CS = kura_changeset:cast(user, Data, Params, [username, email, password]),
-    CS1 = kura_changeset:validate_required(CS, [username, email, password]),
-    CS2 = kura_changeset:validate_length(CS1, password, [{min, 8}]),
-    maybe_hash_password(CS2).
-
-maybe_hash_password(#kura_changeset{valid = true, changes = #{password := Password}} = CS) ->
-    Hash = bcrypt:hashpw(Password, bcrypt:gen_salt()),
-    kura_changeset:put_change(CS, password_hash, list_to_binary(Hash));
-maybe_hash_password(CS) ->
-    CS.
-```
-
-`apply_changes/1` is useful when you need the merged result without hitting the database — for example, to preview changes or pass data to a template:
-
-```erlang
-Preview = kura_changeset:apply_changes(CS),
-#{title := Title, body := Body} = Preview.
-```
-
-## Rendering errors in JSON responses
-
-Convert changeset errors to a JSON-friendly map. A field can have multiple errors (e.g., too short *and* wrong format), so we group them into lists:
-
-```erlang
-changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    lists:foldl(fun({Field, Msg}, Acc) ->
-        Key = atom_to_binary(Field),
-        Existing = maps:get(Key, Acc, []),
-        Acc#{Key => Existing ++ [Msg]}
-    end, #{}, Errors).
-```
-
-Use it in controllers:
-
-```erlang
-create(#{json := Params}) ->
-    CS = post:changeset(#{}, Params),
-    case blog_repo:insert(CS) of
-        {ok, Post} ->
-            {json, 201, #{}, post_to_json(Post)};
-        {error, #kura_changeset{} = CS1} ->
-            {json, 422, #{}, #{errors => changeset_errors_to_json(CS1)}}
+stamp_published_at(CS) ->
+    case {kura_changeset:get_change(CS, status), kura_changeset:get_field(CS, published_at)} of
+        {published, undefined} ->
+            kura_changeset:put_change(CS, published_at, calendar:universal_time());
+        _ ->
+            CS
     end.
 ```
 
-The response looks like:
+`Data` is the current record: `#{}` for a new post, the loaded post map for an update. `Params` is whatever arrived, usually a map with binary keys from a JSON body. `cast/4` keeps only `title`, `body` and `status`, converting each to its field type; anything else in `Params` is ignored. That allow-list is your protection against mass assignment: a client cannot set `user_id` or `inserted_at` by adding them to the JSON.
 
-```json
-{
-  "errors": {
-    "title": ["can't be blank"],
-    "body": ["can't be blank"]
-  }
-}
+`stamp_published_at/1` shows the tools for reading and changing a changeset:
+
+- `get_change(CS, Field)` returns the new value, or `undefined` if the field did not change.
+- `get_field(CS, Field)` returns the new value if there is one, otherwise the value in `Data`.
+- `put_change(CS, Field, Value)` sets a change directly, without casting. Use it for values your code computes, never for user input.
+
+## Trying it in the shell
+
+Let's give the changeset a title that is too short, no body, and a `user_id` it should ignore:
+
+```erlang
+1> rr(kura_changeset).
+[kura_assoc,kura_changeset,kura_column,kura_constraint,
+ kura_embed,kura_field,kura_query,kura_ref]
+2> Bad = blog_post:changeset(#{}, #{~"title" => ~"Hi", ~"user_id" => 42}).
+...
+3> Bad#kura_changeset.valid.
+false
+4> Bad#kura_changeset.errors.
+[{body,<<"can't be blank">>},
+ {title,<<"should be at least 3 character(s)">>}]
+5> Bad#kura_changeset.changes.
+#{title => <<"Hi">>}
 ```
 
-## Available validation functions
+Errors are `{Field, Message}` tuples. `user_id` is nowhere in the changes. Now a valid one that publishes:
 
-| Function | Purpose |
+```erlang
+6> Good = blog_post:changeset(#{}, #{~"title" => ~"Draft ideas", ~"body" => ~"Notes.", ~"status" => ~"published"}).
+...
+7> Good#kura_changeset.changes.
+#{status => published,title => <<"Draft ideas">>,
+  body => <<"Notes.">>,
+  published_at => {{2026,11,3},{7,48,10}}}
+```
+
+The binary `~"published"` was cast to the atom `published`, because `status` is an enum, and `published_at` was stamped. `apply_action/2` gives you the result as a plain map without touching the database, which is handy for previews and for validating input that is not stored at all:
+
+```erlang
+8> kura_changeset:apply_action(Good, insert).
+{ok,#{status => published,title => <<"Draft ideas">>,
+      body => <<"Notes.">>,
+      published_at => {{2026,11,3},{7,48,10}}}}
+```
+
+`apply_action(Bad, insert)` returns `{error, Bad}`.
+
+## Registering users
+
+Users need more validation, and a password hash. `blog_user.erl` gains these functions:
+
+```erlang
+-export([
+    registration_changeset/2,
+    profile_changeset/2,
+    password_changeset/2,
+    email_changeset/2,
+    role_changeset/2
+]).
+
+registration_changeset(Data, Params) ->
+    CS = kura_changeset:cast(?MODULE, Data, Params, [
+        email, username, password, password_confirmation
+    ]),
+    CS1 = kura_changeset:validate_required(CS, [email, username, password]),
+    CS2 = validate_email(CS1),
+    CS3 = validate_username(CS2),
+    CS4 = validate_password(CS3),
+    hash_password(CS4).
+
+profile_changeset(Data, Params) ->
+    CS = kura_changeset:cast(?MODULE, Data, Params, [username]),
+    CS1 = kura_changeset:validate_required(CS, [username]),
+    validate_username(CS1).
+
+password_changeset(Data, Params) ->
+    CS = kura_changeset:cast(?MODULE, Data, Params, [password, password_confirmation]),
+    CS1 = kura_changeset:validate_required(CS, [password]),
+    hash_password(validate_password(CS1)).
+
+email_changeset(Data, Params) ->
+    CS = kura_changeset:cast(?MODULE, Data, Params, [email]),
+    CS1 = kura_changeset:validate_required(CS, [email]),
+    validate_email(CS1).
+
+role_changeset(Data, Params) ->
+    CS = kura_changeset:cast(?MODULE, Data, Params, [role]),
+    kura_changeset:validate_required(CS, [role]).
+
+validate_email(CS) ->
+    CS1 = kura_changeset:validate_format(CS, email, ~"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"),
+    kura_changeset:validate_length(CS1, email, [{max, 160}]).
+
+validate_username(CS) ->
+    CS1 = kura_changeset:validate_length(CS, username, [{min, 2}, {max, 30}]),
+    kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+$").
+
+validate_password(CS) ->
+    CS1 = kura_changeset:validate_length(CS, password, [{min, 12}, {max, 72}]),
+    kura_changeset:validate_confirmation(CS1, password).
+
+hash_password(#kura_changeset{valid = true} = CS) ->
+    case kura_changeset:get_change(CS, password) of
+        undefined ->
+            CS;
+        Password ->
+            kura_changeset:put_change(CS, hashed_password, nova_auth_password:hash(Password))
+    end;
+hash_password(CS) ->
+    CS.
+```
+
+There is one changeset per use case. Registration may set email, username and password; a profile update may only touch the username; changing the role is a separate, admin-only operation. Splitting them keeps each allow-list as small as it can be.
+
+- `validate_confirmation(CS, password)` requires `password_confirmation` in the params to equal `password`.
+- `hash_password/1` only runs on a valid changeset, so we never spend time hashing a password that is about to be rejected. `nova_auth_password:hash/1` comes from `nova_auth` (add it to `deps` and to `applications` in `blog.app.src`) and produces a salted PBKDF2-SHA256 hash.
+- `password` is virtual, so the plain text stays in the changeset and is never written.
+
+```admonish note
+`validate_length` counts bytes, not characters. A 30-character username in a non-Latin script can fail `{max, 30}`. The blog's username format is ASCII anyway.
+```
+
+## Constraints
+
+Validations run in Erlang before the database is involved. Some rules can only be checked by the database: "this email is not taken yet" is true only at the moment of the insert. Those are **constraints**. Kura reads the unique indexes from `indexes/0` and registers a unique constraint for each, so a duplicate email comes back as a changeset error:
+
+```erlang
+9> {error, Taken} = blog_repo:insert(blog_user:registration_changeset(#{}, #{~"email" => ~"alice@example.com", ~"username" => ~"alice2", ~"password" => ~"correct horse battery", ~"password_confirmation" => ~"correct horse battery"})).
+...
+10> Taken#kura_changeset.errors.
+[{email,<<"has already been taken">>}]
+```
+
+The constraint Kura registered, as it appears in the changeset:
+
+```erlang
+#kura_constraint{
+    type = unique,constraint = <<"users_email_index">>,
+    field = email,message = <<"has already been taken">>}
+```
+
+For a constraint Kura cannot infer, declare it in the changeset: `unique_constraint/2,3`, `foreign_key_constraint/2,3` (used in the [next chapters](associations.md)), `check_constraint/3,4` and `exclusion_constraint/2,3`. Any other database error is returned as `{error, Reason}`, not as a changeset.
+
+## Rendering errors in JSON responses
+
+An API should return errors grouped by field. `src/blog_api_json.erl` is the blog's helper for turning records into JSON-ready maps; its `errors/1`:
+
+```erlang
+errors(#kura_changeset{errors = Errors}) ->
+    Fields = lists:usort([Field || {Field, _} <- Errors]),
+    #{Field => [Message || {F, Message} <- Errors, F =:= Field] || Field <- Fields}.
+```
+
+```erlang
+11> blog_api_json:errors(Bad).
+#{title => [<<"should be at least 3 character(s)">>],
+  body => [<<"can't be blank">>]}
+```
+
+`kura_changeset:traverse_errors/2` does the same grouping and also lets you rewrite each message with a function, for example for translations.
+
+## Validation functions
+
+| Function | Checks |
 |---|---|
-| `validate_required(CS, Fields)` | Fields must be present and non-empty |
-| `validate_format(CS, Field, Regex)` | Value must match the regex |
-| `validate_length(CS, Field, Opts)` | String length: `[{min,N}, {max,N}, {is,N}]` |
-| `validate_number(CS, Field, Opts)` | Number range: `[{greater_than,N}, {less_than,N}, {greater_than_or_equal_to,N}, {less_than_or_equal_to,N}, {equal_to,N}]` |
-| `validate_inclusion(CS, Field, List)` | Value must be in the list |
-| `validate_change(CS, Field, Fun)` | Custom validation: `fun(Val) -> ok \| {error, Msg}` |
-| `unique_constraint(CS, Field)` | Map PG unique violation to a changeset error |
-| `foreign_key_constraint(CS, Field)` | Map PG FK violation to a changeset error |
-| `check_constraint(CS, Name, Field, Opts)` | Map PG check constraint to a changeset error |
-
-```admonish info
-`validate_format`, `validate_length`, `validate_number`, and `validate_inclusion` only run when the field appears in `changes`. If the field was not cast, the validation is skipped. This means update changesets only validate the fields being changed — unchanged fields keep their existing values without re-validation.
-```
+| `validate_required(CS, Fields)` | Field present and not blank |
+| `validate_format(CS, Field, Regex)` | Value matches a regex |
+| `validate_length(CS, Field, Opts)` | `{min, N}`, `{max, N}`, `{is, N}` |
+| `validate_number(CS, Field, Opts)` | `{greater_than, N}`, `{less_than, N}`, `{greater_than_or_equal_to, N}`, `{less_than_or_equal_to, N}`, `{equal_to, N}` |
+| `validate_inclusion(CS, Field, List)` | Value is in the list |
+| `validate_exclusion(CS, Field, List)` | Value is not in the list |
+| `validate_subset(CS, Field, List)` | Every element of a list value is in the list |
+| `validate_confirmation(CS, Field)` | `<Field>_confirmation` equals the field |
+| `validate_change(CS, Field, Fun)` | Your own check |
+| `add_error(CS, Field, Message)` | Adds an error by hand |
 
 ## Schemaless changesets
 
-For validating data that does not map to a database table (like search filters or contact forms), pass a types map instead of a schema module:
+Changesets are not only for tables. Pass a map of field types instead of a schema module and you get casting and validation for any input. The posts API uses one for its query string (`?page=2&page_size=20&status=published`), in `src/blog_posts.erl`:
 
 ```erlang
-Types = #{query => string, page => integer, per_page => integer},
-CS = kura_changeset:cast(Types, #{}, Params, [query, page, per_page]),
-CS1 = kura_changeset:validate_required(CS, [query]),
-CS2 = kura_changeset:validate_number(CS1, per_page, [{greater_than, 0}, {less_than, 101}]).
+list_posts(Params) ->
+    Types = #{
+        page => integer, page_size => integer, status => {enum, [draft, published, archived]}
+    },
+    CS = kura_changeset:cast(Types, #{}, Params, [page, page_size, status]),
+    CS1 = kura_changeset:validate_number(CS, page, [{greater_than, 0}]),
+    CS2 = kura_changeset:validate_number(CS1, page_size, [
+        {greater_than, 0}, {less_than_or_equal_to, 50}
+    ]),
+    case kura_changeset:apply_action(CS2, list) of
+        {ok, Filters} ->
+            ...
+        {error, _} = Error ->
+            Error
+    end.
 ```
 
-Schemaless changesets cannot be persisted via the repo — they are for validation only.
+Query string values are always binaries; the cast turns `~"2"` into `2` and `~"published"` into `published`, and rejects everything else:
+
+```erlang
+12> blog_posts:list_posts(#{~"page" => ~"two"}).
+{error,#kura_changeset{valid = false,schema = undefined,
+                       data = #{},
+                       params = #{page => <<"two">>},
+                       changes = #{},
+                       errors = [{page,<<"is not a valid integer">>}],
+                       ...}}
+```
+
+The `status` enum matters for security too: the client's string is matched against the three allowed values, never turned into a new atom.
+
+We will finish `list_posts/1` in the next chapter.
+
+## Testing changesets
+
+Every rule above has a test in `test/blog_data_changeset_SUITE.erl`. Changeset tests that never hit the database are plain function calls:
+
+```erlang
+post_changeset_ignores_fields_not_cast(_Config) ->
+    CS = blog_post:changeset(#{}, #{
+        ~"title" => ~"Hello", ~"body" => ~"World", ~"user_id" => 42, ~"id" => 7
+    }),
+    true = CS#kura_changeset.valid,
+    #{title := ~"Hello", body := ~"World"} = Changes = CS#kura_changeset.changes,
+    false = maps:is_key(user_id, Changes),
+    false = maps:is_key(id, Changes).
+```
+
+Tests that insert (like the unique email check) run inside a sandbox transaction that is rolled back after each test; the [next chapter](crud.md#testing-against-the-database) shows the setup.
 
 ---
 
-Validations are declarative and composable. Errors are data, not exceptions. Now let's use changesets to perform [CRUD operations with the repository](crud.md).
+Next: putting changesets to work with [CRUD and the Query Builder](crud.md).
