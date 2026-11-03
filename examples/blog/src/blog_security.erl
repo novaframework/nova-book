@@ -58,6 +58,7 @@ session_actor(Req) ->
                     {true, Actor} = authenticated(User),
                     {ok, Actor};
                 {error, _} = Error ->
+                    {ok, _} = nova_auth_actor:delete(Req),
                     Error
             end;
         {error, _} = Error ->

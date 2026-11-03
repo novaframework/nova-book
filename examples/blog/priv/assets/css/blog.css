@@ -31,7 +31,7 @@ button {
   border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff;
 }
 .site-header button, form.inline button { background: none; color: var(--accent); }
-button.danger { border-color: var(--danger); color: var(--danger); }
+button.danger, form.inline button.danger { border-color: var(--danger); color: var(--danger); }
 
 .field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
 input, textarea, select {

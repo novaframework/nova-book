@@ -12,7 +12,8 @@
     layout_adapts_to_the_user/1,
     flash_partial_renders_each_message/1,
     status_tuple_skips_the_status_page/1,
-    every_template_is_a_module/1
+    every_template_is_a_module/1,
+    url_tag_prefixes_the_app/1
 ]).
 
 all() ->
@@ -25,7 +26,8 @@ all() ->
         layout_adapts_to_the_user,
         flash_partial_renders_each_message,
         status_tuple_skips_the_status_page,
-        every_template_is_a_module
+        every_template_is_a_module,
+        url_tag_prefixes_the_app
     ].
 
 init_per_suite(Config) ->
@@ -119,6 +121,19 @@ every_template_is_a_module(_Config) ->
     {module, blog_layout_dtl} = code:ensure_loaded(blog_layout_dtl),
     {module, post_card_dtl} = code:ensure_loaded(post_card_dtl),
     [post] = post_card_dtl:variables().
+
+url_tag_prefixes_the_app(_Config) ->
+    Options = [
+        {out_dir, false},
+        {libraries, [{nova_erlydtl_inventory, nova_erlydtl_inventory}]},
+        {default_libraries, [nova_erlydtl_inventory]}
+    ],
+    {ok, Module} = erlydtl:compile_template(
+        ~"<a href=\"{% url \"/posts\" application=\"blog\" %}\">Posts</a>",
+        url_reference_dtl,
+        Options
+    ),
+    ~"<a href=\"/posts\">Posts</a>" = html(Module:render(#{})).
 
 render(Source, Vars) ->
     {ok, Module} = erlydtl:compile_template(Source, views_reference_dtl, [{out_dir, false}]),

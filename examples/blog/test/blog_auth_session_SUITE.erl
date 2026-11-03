@@ -132,5 +132,8 @@ expired_session_token_logs_out(_Config) ->
     {ok, _} = blog_repo:update(
         kura_changeset:cast(blog_user_token, Token, #{inserted_at => Fifteen}, [inserted_at])
     ),
+    Session = #{nova_session_id => list_to_binary(maps:get("session_id", Jar))},
+    {ok, #{id := _}} = nova_auth_actor:fetch(Session),
     {302, Headers, _, _} = blog_web:get(Jar, "/posts/new"),
-    "/login" = blog_web:header("location", Headers).
+    "/login" = blog_web:header("location", Headers),
+    {error, not_found} = nova_auth_actor:fetch(Session).
