@@ -112,15 +112,15 @@ api_tags_and_metadata(Config) ->
         ~"title" => ~"Tag me", ~"metadata" => #{~"seo_title" => ~"Tag me please"}
     }),
     Path = "/api/posts/" ++ integer_to_list(Id),
+    Token = blog_data_fixtures:token(Alice),
     {200, #{~"tags" := [~"erlang", ~"nova"]}} =
-        blog_data_fixtures:request_as(
-            blog_data_fixtures:token(Alice), put, Path ++ "/tags", #{tags => [~"nova", ~"erlang"]}
-        ),
+        blog_data_fixtures:request_as(Token, put, Path ++ "/tags", #{tags => [~"nova", ~"erlang"]}),
     {200, #{
         ~"tags" := [~"erlang", ~"nova"],
         ~"metadata" := #{~"seo_title" := ~"Tag me please", ~"reading_minutes" := null}
-    }} = blog_data_fixtures:request(get, Path),
-    {200, #{~"posts" := [#{~"id" := Id}]}} = blog_data_fixtures:request(get, "/api/posts?tag=nova").
+    }} = blog_data_fixtures:request_as(Token, get, Path),
+    {200, #{~"posts" := [#{~"id" := Id}]}} =
+        blog_data_fixtures:request_as(Token, get, "/api/posts?tag=nova").
 
 sorted({ok, Tags}) ->
     {ok, lists:sort(fun(A, B) -> maps:get(name, A) =< maps:get(name, B) end, Tags)}.

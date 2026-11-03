@@ -258,11 +258,7 @@ actor(#{id := Id}) ->
     #{id => Id, provider => password}.
 
 login(User) ->
-    {ok, SessionId} = nova_session:generate_session_id(),
-    ok = nova_session_ets:set_value(
-        SessionId, nova_auth_actor:session_key(), term_to_binary(actor(User))
-    ),
-    SessionId.
+    blog_data_fixtures:session(User).
 
 cookie(User) ->
     [{"cookie", "session_id=" ++ binary_to_list(login(User))}].

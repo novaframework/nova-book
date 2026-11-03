@@ -142,7 +142,7 @@ api_create_show_update_delete(Config) ->
         }),
     Path = "/api/posts/" ++ integer_to_list(Id),
     {200, #{~"title" := ~"My First Post", ~"published_at" := null}} =
-        blog_data_fixtures:request(get, Path),
+        blog_data_fixtures:request_as(Token, get, Path),
     {200, #{~"status" := ~"published", ~"published_at" := <<_/binary>>}} =
         blog_data_fixtures:request_as(Token, put, Path, #{status => ~"published"}),
     {204, <<>>} = blog_data_fixtures:request_as(Token, delete, Path),

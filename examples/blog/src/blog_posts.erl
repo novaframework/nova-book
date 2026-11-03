@@ -3,6 +3,8 @@
 
 -export([
     list_posts/1,
+    list_posts/2,
+    visible_to/1,
     get_post/1,
     get_post/2,
     create_post/2,
@@ -21,6 +23,9 @@
 ]).
 
 list_posts(Params) ->
+    list_posts(kura_query:from(blog_post), Params).
+
+list_posts(Base, Params) ->
     Types = #{
         page => integer,
         page_size => integer,
@@ -34,7 +39,7 @@ list_posts(Params) ->
     ]),
     case kura_changeset:apply_action(CS2, list) of
         {ok, Filters} ->
-            Query = filter_by_tag(filter_by_status(kura_query:from(blog_post), Filters), Filters),
+            Query = filter_by_tag(filter_by_status(Base, Filters), Filters),
             Newest = kura_query:order_by(Query, [{inserted_at, desc}, {id, desc}]),
             kura_paginator:paginate(blog_repo, Newest, #{
                 page => maps:get(page, Filters, 1),
@@ -43,6 +48,15 @@ list_posts(Params) ->
         {error, _} = Error ->
             Error
     end.
+
+visible_to(#{role := admin}) ->
+    kura_query:from(blog_post);
+visible_to(#{id := UserId}) ->
+    kura_query:where(
+        kura_query:from(blog_post), {'or', [{status, ~"published"}, {user_id, UserId}]}
+    );
+visible_to(undefined) ->
+    kura_query:where(kura_query:from(blog_post), {status, ~"published"}).
 
 filter_by_status(Query, #{status := Status}) ->
     kura_query:where(Query, {status, atom_to_binary(Status)});

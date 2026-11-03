@@ -14,5 +14,7 @@ policies(Action) when Action =:= update_post; Action =:= delete_post; Action =:=
     [nova_auth_policy:allow_role(admin), nova_auth_policy:allow_owner(user_id)];
 policies(manage_users) ->
     [nova_auth_policy:allow_role(admin)];
+policies(manage_tags) ->
+    [nova_auth_policy:allow_role(admin)];
 policies(_Action) ->
     [nova_auth_policy:deny_all()].

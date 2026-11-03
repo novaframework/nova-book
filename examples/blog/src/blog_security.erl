@@ -1,6 +1,7 @@
 -module(blog_security).
 
 -export([current_user/1, require_user/1, require_admin/1, require_bearer/1, bearer_token/1]).
+-export([optional_bearer/1, require_admin_bearer/1, session_actor/1]).
 
 current_user(Req) ->
     case session_actor(Req) of
@@ -39,6 +40,23 @@ require_bearer(Req) ->
             unauthorized(~"missing bearer token")
     end.
 
+optional_bearer(Req) ->
+    case cowboy_req:header(~"authorization", Req) of
+        undefined -> true;
+        _ -> require_bearer(Req)
+    end.
+
+require_admin_bearer(Req) ->
+    case require_bearer(Req) of
+        {true, Actor} ->
+            case blog_policy:can(Actor, manage_tags, #{}) of
+                true -> {true, Actor};
+                false -> forbidden(~"admins only")
+            end;
+        Denied ->
+            Denied
+    end.
+
 bearer_token(Req) ->
     case cowboy_req:header(~"authorization", Req) of
         <<Scheme:6/binary, " ", Token/binary>> ->
@@ -72,3 +90,7 @@ authenticated(#{id := Id} = User) ->
 unauthorized(Message) ->
     Headers = #{~"content-type" => ~"application/json", ~"www-authenticate" => ~"Bearer"},
     {false, 401, Headers, iolist_to_binary(json:encode(#{error => Message}))}.
+
+forbidden(Message) ->
+    Headers = #{~"content-type" => ~"application/json"},
+    {false, 403, Headers, iolist_to_binary(json:encode(#{error => Message}))}.
