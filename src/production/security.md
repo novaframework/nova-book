@@ -1,6 +1,6 @@
 # Security
 
-This chapter goes through the blog the way an attacker would: what input reaches it, what it trusts, what it writes to logs and what it ships. For each class of problem it says what the stack (Nova 0.18.1, Kura, nova_auth, erlydtl, Arizona) does by default, where that default is wrong, and how the blog closes the gap. Three of the gaps were real bugs in the blog as the earlier parts left it; they are fixed here, with tests.
+This chapter goes through the blog the way an attacker would: what input reaches it, what it trusts, what it writes to logs and what it ships. For each class of problem it says what the stack (Nova 0.18.1, Kura, nova_auth, erlydtl, Arizona) does by default, where that default is wrong, and how the blog closes the gap. Two of the gaps were real bugs in the blog as the earlier parts left it; they are fixed here, with tests.
 
 For the general Erlang guidance behind much of this, see the [ERLEF Secure Coding and Deployment Hardening Guidelines](https://erlef.github.io/security-wg/secure_coding_and_deployment_hardening/).
 
@@ -198,9 +198,9 @@ plus `drafts_are_hidden_from_other_users`, `admins_see_every_draft` and `bad_tok
 
 ### Live views verify the token
 
-Arizona routes never pass through Nova's security functions, so Part VI's `blog_live_middleware` found the user itself, by reading the actor that `nova_auth_actor` caches in the session. That cache is not the source of truth: `nova_auth`'s password change and reset delete the user's tokens in the database but leave the cached actor, and so does revoking a token with `blog_accounts:revoke_token/1`. A revoked session kept working in the live editor until the next plain HTTP request cleared it.
+Arizona routes never pass through Nova's security functions, so a live view has to find the user itself. Part VI's `blog_live_middleware` calls `blog_security:session_actor/1` instead of trusting the actor `nova_auth_actor` caches in the session. Here is why: that cache is not the source of truth. `nova_auth`'s password change and reset delete the user's tokens in the database but leave the cached actor, and so does revoking a token with `blog_accounts:revoke_token/1`. A middleware that read the cache would keep a revoked session working in the live editor until the next plain HTTP request cleared it.
 
-The middleware now asks `blog_security:session_actor/1`, the function the HTML security functions use, which checks the session's token against the database on every mount and clears the cached actor when the token is gone:
+`session_actor/1` is the function the HTML security functions use. It checks the session's token against the database on every mount and clears the cached actor when the token is gone:
 
 ```erlang
 session_user(Req) ->
@@ -341,7 +341,7 @@ The blog has five: the database password, the Kura encryption key, the ops token
 - **Not in the repository.** `prod_sys.config.src` and `prod_vm.args.src` only have `${VAR}` references, and a test checks it. The dev and test configs have fixed values for local databases only.
 - **Into the environment of the node, from your secret store.** The orchestrator (systemd's `EnvironmentFile=` with mode 0600, Kubernetes secrets, your platform's equivalent) sets the variables; see [Deployment](deployment.md).
 - **Know where they end up.** relx writes the substituted `sys.config` and `vm.args` next to the release (or to `RELX_OUT_FILE_PATH`). Anyone who can read those files has every secret.
-- **Empty is not a value.** An unset `${VAR}` in quotes becomes `""`. `blog_ops_security` used to accept an empty `x-ops-token` header when `BLOG_OPS_TOKEN` was unset; it now refuses an empty expected token, and `blog_app` refuses to start without an encryption key ([Configuration](configuration.md#quote-strings-give-numbers-a-default)).
+- **Empty is not a value.** An unset `${VAR}` in quotes becomes `""`. `blog_ops_security` refuses an empty expected token, and `blog_app` refuses to start without an encryption key ([Configuration](configuration.md#quote-strings-give-numbers-a-default)).
 - **The cookie is root.** Anyone who can reach the distribution port with the cookie can run any code in the node. The production `vm.args` binds distribution to loopback and takes the cookie from `RELEASE_COOKIE`; never use the default `blog_cookie` outside your laptop.
 - **Compare secrets in constant time.** `blog_ops_security` compares SHA-256 digests with `crypto:hash_equals/2`, so the comparison time does not reveal how much of a guess was right.
 
@@ -366,7 +366,7 @@ Logs live longer than requests and are read by more people. What the blog does t
 - **No request maps in crash logs.** A `function_clause` stack trace contains the arguments of the failed call, and for a controller that is the whole request map, `authorization` and cookies included. `use_stacktrace` is off in production. The same applies to plugins that return values Nova does not accept: the crash report dumps the request, which is one more reason the blog wraps `nova_auth_rate_limit`.
 - **Log level `info` in production.** At `debug`, the supervisor report for the database pool includes the pool's start arguments, password included. At `info` that report is not logged; the production config also filters the remaining OTP progress reports.
 - **Traces without values.** Kura spans carry SQL with placeholders and only the number of parameters. The HTTP spans have the path, not the query string. They do have the client's IP address (`network.peer.address`), which counts as personal data under the GDPR: set your trace retention accordingly.
-- **Job arguments are stored, so keep secrets out of them.** The email jobs in Part IX carry a user id and generate the one-time token when they run; a token in the arguments would sit in the jobs table for weeks.
+- **Job arguments are stored, so keep secrets out of them.** The email jobs in Part VIII carry a user id and generate the one-time token when they run; a token in the arguments would sit in the jobs table for weeks.
 
 ## Dependencies
 

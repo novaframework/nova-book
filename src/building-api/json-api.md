@@ -37,6 +37,8 @@ The name is used as given: `--name tags` makes `blog_tags_controller` and, after
 
 ### The controller
 
+The controller, as generated:
+
 ```erlang
 -module(blog_tags_controller).
 
@@ -202,7 +204,7 @@ tag(Tag) ->
 Add `tag/1` to the module's export list.
 
 ```admonish note title="Who may change tags?"
-Like the posts API at this stage, the tags API has `security => false`, so anyone can create and delete tags. `rebar3 nova audit` (next chapter) lists every write route that is still open, and [Security](../production/security.md#tag-writes-need-an-admin) moves the write routes into their own group that requires an admin's bearer token. The tests in the companion app already send one.
+Unlike the posts API, whose writes need a bearer token since [Authentication](../auth-sessions/authentication.md#api-tokens), the tags API has `security => false`, so anyone can create and delete tags. `rebar3 nova audit` (next chapter) lists every write route that is still open, and [Security](../production/security.md#tag-writes-need-an-admin) moves the write routes into their own group that requires an admin's bearer token. The tests in the companion app already send one.
 ```
 
 ## Validating request bodies with JSON schemas

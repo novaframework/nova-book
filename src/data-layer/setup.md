@@ -202,7 +202,7 @@ The `repos` map can hold more than one repo, each with its own backend. With the
     blog_repo => #{backend => kura_backend_postgres, ...},
     analytics_repo => #{
         backend => kura_backend_sqlite,
-        database => <<":memory:">>
+        database => ~":memory:"
     }
 }}
 ```

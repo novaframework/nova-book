@@ -116,9 +116,7 @@ frame(Event, Payload) ->
     {text, json:encode(#{~"event" => Event, ~"data" => Payload})}.
 ```
 
-`join` happens in `websocket_init/1`, which runs in the connection process after the upgrade. The handler then sends the recent events, so a reader who just arrived sees what happened a minute ago, not an empty list. A list of frames is fine as a reply; Nova sends them in order. An event published in the moment between `join` and `recent()` is delivered twice, once live and once in the backlog, so the feed is at-least-once. For the blog a repeated line in the header is harmless; a client that cares can skip an event it has already shown.
-
-Joining before reading the backlog means an event published in between can arrive twice (once in the backlog, once live) but never not at all. For a feed that is the right side to err on.
+`join` happens in `websocket_init/1`, which runs in the connection process after the upgrade. The handler then sends the recent events, so a reader who just arrived sees what happened a minute ago, not an empty list. A list of frames is fine as a reply; Nova sends them in order. An event published in the moment between `join` and `recent()` is delivered twice, once live and once in the backlog, so the feed is at-least-once. Joining before reading the backlog means an event can arrive twice but never not at all, which is the right side to err on for a feed: a repeated line in the header is harmless, and a client that cares can skip an event it has already shown.
 
 ### Pub/sub in a gen_server
 
@@ -221,15 +219,19 @@ ok
 Events start where data changes. The comments API from [Associations & Preloading](../data-layer/associations.md) is one such place. Once the comment is stored, `blog_posts_controller:create_comment/1` announces it:
 
 ```erlang
-create_comment(#{bindings := #{~"id" := Id}, json := Params} = Req) ->
-    case {blog_posts:get_post(Id), current_author(Req)} of
-        {{ok, Post}, {ok, Author}} ->
-            case blog_posts:add_comment(Post, Author, Params) of
+create_comment(#{bindings := #{~"id" := Id}, json := Params, auth_data := Actor}) ->
+    case blog_posts:get_post(Id) of
+        {ok, Post} ->
+            case blog_posts:add_comment(Post, Actor, Params) of
                 {ok, Comment} ->
-                    ok = blog_notify:comment_created(Post, Author, Comment),
+                    ok = blog_notify:comment_created(Post, Actor, Comment),
                     {json, 201, #{}, blog_api_json:comment(Comment)};
-                {error, #kura_changeset{} = CS} -> unprocessable(CS)
+                {error, #kura_changeset{} = CS} ->
+                    unprocessable(CS)
             end;
+        {error, not_found} ->
+            not_found()
+    end.
 ```
 
 The event functions in `blog_notify` decide what each channel gets:

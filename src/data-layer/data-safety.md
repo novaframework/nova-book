@@ -241,7 +241,7 @@ after_delete(Post) ->
     kura_audit:log(blog_repo, ?MODULE, delete, Post).
 ```
 
-`stash/1` remembers the row as it was before the update, so `log/4` can store the old values next to the new ones. `kura_audit:set_actor(~"alice")` sets who is acting for the current process; once Part III has a logged-in user, a plugin can set it per request. After the curl session above:
+`stash/1` remembers the row as it was before the update, so `log/4` can store the old values next to the new ones. `kura_audit:set_actor(~"alice")` sets who is acting for the current process; once Part III has a logged-in user, the security functions set it per request ([Authentication](../auth-sessions/authentication.md#security-functions)). After the curl session above:
 
 ```
 blog_dev=# SELECT table_name, record_id, action, changes FROM audit_log ORDER BY id;
@@ -265,7 +265,7 @@ Kura reads the keys from its application environment. In `config/dev_sys.config.
 %% Development-only key. Generate your own: base64 of 32 random bytes.
 {encryption, #{
     active => 1,
-    keys => [{1, <<"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q=">>}]
+    keys => [{1, ~"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q="}]
 }}
 ```
 

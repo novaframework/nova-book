@@ -52,6 +52,7 @@ Put it in front of Nova's chain with the `middleware_handlers` key of `cowboy_co
 ```erlang
 {cowboy_configuration, #{
     port => 8080,
+    stream_handlers => [nova_stream_h, blog_session_h, cowboy_compress_h, cowboy_stream_h],
     middleware_handlers => [
         arizona_cowboy_middleware,
         nova_router,
@@ -63,7 +64,7 @@ Put it in front of Nova's chain with the `middleware_handlers` key of `cowboy_co
 }},
 ```
 
-The last five entries are Nova's default chain.
+The last five entries are Nova's default chain. `stream_handlers` is the list from [Sessions](../auth-sessions/sessions.md#hardening-the-cookie); keep it, or the session cookie loses its flags.
 
 ```admonish warning title="Spell the list out in sys.config"
 The `arizona_nova` README suggests `middleware_handlers => arizona_nova:middlewares()`. That is a function call, and a sys.config file is read with `file:consult/1`, which only accepts terms: the node refuses to boot with `bad term`. `arizona_nova:middlewares()` returns exactly the list above, so write the list out.

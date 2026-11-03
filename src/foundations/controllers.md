@@ -329,6 +329,8 @@ rebar3 nova gen_controller --name pages --actions about,contact
 ===> Created .../blog/src/controllers/blog_pages_controller.erl
 ```
 
+The file, as generated:
+
 ```erlang
 -module(blog_pages_controller).
 

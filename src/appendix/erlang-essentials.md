@@ -1,6 +1,6 @@
 # Erlang Essentials
 
-This appendix is not a full Erlang tutorial. It is a quick reference for the parts of the language this book uses, written for OTP 28 and newer, with links to proper learning material.
+This appendix is not a full Erlang tutorial. It is a quick reference for the parts of the language this book uses, written for OTP 29, with links to proper learning material.
 
 ## Learning resources
 
@@ -14,11 +14,11 @@ We recommend [mise](https://mise.jdx.dev/) for managing tool versions:
 
 ```shell
 curl https://mise.run | sh
-mise use -g erlang@28 rebar@3
+mise use -g erlang@29 rebar@3
 rebar3 version
 ```
 
-`mise use -g` installs the tools and makes them the default for your user; drop `-g` inside a project to pin versions in that project's `mise.toml` instead. Any OTP from 28 up works with this book (`erlang@29` is fine too).
+`mise use -g` installs the tools and makes them the default for your user; drop `-g` inside a project to pin versions in that project's `mise.toml` instead. The book needs OTP 29: Nova, Kura and Shigoto run on 28, but Arizona (Part VI) requires 29.
 
 mise builds Erlang from source, which takes a few minutes and needs a C compiler plus the OpenSSL and ncurses development headers. On Debian or Ubuntu:
 

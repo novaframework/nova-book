@@ -103,7 +103,7 @@ plugin_info() ->
 |---|---|
 | `{ok, Req, State}` | Continue with the next plugin |
 | `{ok, Reply, Req, State}` | Set the response, continue |
-| `{break, Req, State}`, `{break, Reply, Req, State}` | Skip the rest of this chain |
+| `{break, Req, State}`, `{break, Reply, Req, State}` | Crashes the request in 0.18.1 (500); use `stop` |
 | `{stop, Reply, Req, State}` | Send `Reply` and stop the request |
 | `{stop, Req, State}` | Stop; the plugin already replied |
 
@@ -184,7 +184,7 @@ Tokens are standard base64: URL-encode them in links. `nova_auth_rate_limit` nee
 
 ## Kura: schemas
 
-[Schemas & Migrations](../data-layer/schemas-migrations.md), [Associations](../data-layer/associations.md).
+[Schemas & Migrations](../data-layer/schemas-migrations.md), [Associations](../data-layer/associations.md). The blog's `blog_post`, without its changeset and hooks:
 
 ```erlang
 -module(blog_post).
@@ -199,22 +199,44 @@ fields() ->
     [
         #kura_field{name = id, type = id, primary_key = true, nullable = false},
         #kura_field{name = title, type = string, nullable = false},
-        #kura_field{name = status, type = {enum, [draft, published]}, default = draft},
+        #kura_field{name = body, type = text, nullable = false},
+        #kura_field{
+            name = status,
+            type = {enum, [draft, published, archived]},
+            nullable = false,
+            default = draft
+        },
         #kura_field{name = user_id, type = bigint, nullable = false},
+        #kura_field{name = published_at, type = utc_datetime},
         #kura_field{name = metadata, type = jsonb},
+        #kura_field{name = lock_version, type = integer, nullable = false, default = 1},
+        #kura_field{name = deleted_at, type = utc_datetime},
         #kura_field{name = inserted_at, type = utc_datetime},
         #kura_field{name = updated_at, type = utc_datetime}
     ].
 
-indexes() -> [{[user_id], #{}}, {[title], #{unique => true}}].
+indexes() ->
+    [
+        {[user_id], #{}},
+        {[status], #{}}
+    ].
 
 associations() ->
     [
-        #kura_assoc{name = author, type = belongs_to, schema = blog_user, foreign_key = user_id},
+        #kura_assoc{
+            name = author,
+            type = belongs_to,
+            schema = blog_user,
+            foreign_key = user_id,
+            on_delete = cascade
+        },
         #kura_assoc{name = comments, type = has_many, schema = blog_comment, foreign_key = post_id},
         #kura_assoc{
-            name = tags, type = many_to_many, schema = blog_tag,
-            join_through = blog_post_tag, join_keys = {post_id, tag_id}
+            name = tags,
+            type = many_to_many,
+            schema = blog_tag,
+            join_through = blog_post_tag,
+            join_keys = {post_id, tag_id}
         }
     ].
 
@@ -381,7 +403,7 @@ Routes go in the `arizona_nova` env:
 ]}]}
 ```
 
-A middleware is `Fun(Req, Bindings) -> {cont, Req, Bindings} | {halt, Req}`. Arizona routes bypass Nova's plugins and security; read the session with `nova_auth_actor:fetch(arizona_req:raw(Req))`. Arizona needs OTP 29.
+A middleware is `Fun(Req, Bindings) -> {cont, Req, Bindings} | {halt, Req}`. Arizona routes bypass Nova's plugins and security; read the user with `blog_security:session_actor(arizona_req:raw(Req))`, which checks the session's token in the database ([Security](../production/security.md#live-views-verify-the-token)). Arizona needs OTP 29.
 
 ## WebSockets
 

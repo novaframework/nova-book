@@ -501,7 +501,7 @@ api_create_show_update_delete(Config) ->
     {404, _} = blog_data_fixtures:request(get, "/api/posts/abc").
 ```
 
-This is the test as it stands at the end of the book: writes need a bearer token (Part III), and a draft is only shown to its author ([Security](../production/security.md#drafts-in-the-json-api)), so the test reads its own draft with the token too. `token/1` issues one for a user and `request_as/3,4` sends it. Until you get there, call `request/2,3` and put `user_id => AliceId` in the body, as the curl examples below do.
+This is the test as it stands at the end of the book: writes need a bearer token (Part III), and a draft is only shown to its author ([Security](../production/security.md#drafts-in-the-json-api)), so the test reads its own draft with the token too. `token/1` issues one for a user and `request_as/3,4` sends it. Until you get there, call `request/2,3` and put `user_id => AliceId` in the body, as the curl examples above do.
 
 Run these two suites with:
 

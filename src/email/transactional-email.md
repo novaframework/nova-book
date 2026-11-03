@@ -19,6 +19,8 @@ Shigoto is already a dependency (`{shigoto, "~> 1.9"}`) and listed in `applicati
 
 `repo` names the pool; `queues` lists the queues this node works on and how many jobs of each it runs at once. Mail gets its own queue, `mailers`, so a backlog of email never holds up other work.
 
+Add `ok = shigoto_migration:up(blog_repo),` right after `kura_migrator:migrate/1` in `blog_app:start/2`; [Background Jobs](../jobs/background-jobs.md#shigotos-tables) explains why.
+
 A **worker** is a module with the `shigoto_worker` behaviour. Its `perform/1` gets the job's arguments and returns `ok`, `{error, Reason}` (try again later) or `{snooze, Seconds}` (not now, without counting as a failure). Arguments are stored as JSON, so they come back as a map with binary keys.
 
 A **job** is inserted with `shigoto:insert/1`: a worker and its arguments. A queue process on some node picks it up, runs the worker, and records the outcome.

@@ -1,6 +1,6 @@
 # Building Pages
 
-The blog has a JSON API, live views and logins. This chapter gives it ordinary HTML pages that work without JavaScript: a post list, a post page, forms to write and edit posts, and the login and registration forms from [Authentication](../auth-sessions/authentication.md). They share a layout, a small view helper module, a few partials and one self-hosted stylesheet.
+The blog has a JSON API and logins. This chapter gives it ordinary HTML pages that work without JavaScript: a post list, a post page, forms to write and edit posts, and the login and registration forms from [Authentication](../auth-sessions/authentication.md). They share a layout, a small view helper module, a few partials and one self-hosted stylesheet.
 
 ## The layout
 

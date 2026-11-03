@@ -19,6 +19,7 @@ Shigoto stores jobs in PostgreSQL, in the blog's own database. There is no separ
     kura_postgres,
     nova_auth,
     nova_json_schemas,
+    arizona_nova,
     shigoto,
     hikyaku
 ]},

@@ -4,7 +4,7 @@ Part I introduced the pieces one at a time: [status-code routes](../foundations/
 
 ## Where errors come from
 
-Here is every error a client of the blog's API can get, and what produces it. Each row is covered by `blog_api_tags_SUITE` or `blog_api_errors_SUITE`.
+Here is every error a client of the blog's API can get, and what produces it. Each row is covered by `blog_api_tags_SUITE`, `blog_api_errors_SUITE`, `blog_auth_api_SUITE`, `blog_auth_policy_SUITE` or `blog_data_safety_SUITE`.
 
 | Situation | Status | Produced by | Body |
 |---|---|---|---|
@@ -15,7 +15,12 @@ Here is every error a client of the blog's API can get, and what produces it. Ea
 | Body does not match the JSON schema (tags) | 400 | `nova_json_schemas` | empty |
 | Record does not exist | 404 | the controller or `blog_api_fallback_controller` | `{"error":"not_found"}` |
 | Changeset is invalid | 422 | the controller or `blog_api_fallback_controller` | `{"errors":{...}}` |
-| Security function says no | 401 | Nova's security handler | empty |
+| Missing, invalid or expired bearer token | 401 | `blog_security:require_bearer/1` | `{"error":"missing bearer token"}` or `{"error":"invalid or expired token"}` |
+| Security function returns plain `false` | 401 | Nova's security handler | empty |
+| Wrong email or password for a token | 401 | `blog_tokens_controller:create/1` | `{"error":"invalid email or password"}` |
+| Too many token requests from one address | 429 | `blog_rate_limit` (`nova_auth_rate_limit`) | `{"error":"too many requests"}` |
+| Changing someone else's post | 403 | `blog_posts_controller` (`authorize/3`) | `{"error":"you can only change your own posts"}` |
+| Updating a post that changed since it was read | 409 | `blog_posts_controller:update/1` | `{"error":"post was changed by someone else"}` |
 | Controller or plugin crashes | 500 | 500 status handler (`blog_error_controller:server_error/1`) | `{"error":"internal_error"}` |
 | Security function crashes | 500 | Nova's security handler | empty |
 | Controller returns something unexpected | 500 | `blog_api_fallback_controller` | `{"error":"internal_error"}` |

@@ -11,7 +11,8 @@
     unguarded_schema_route_crashes_without_json/1,
     unknown_api_path_is_json_404/1,
     plugin_crash_uses_500_handler/1,
-    security_crash_skips_500_handler/1
+    security_crash_skips_500_handler/1,
+    security_false_is_bare_401/1
 ]).
 
 all() ->
@@ -24,7 +25,8 @@ all() ->
         unguarded_schema_route_crashes_without_json,
         unknown_api_path_is_json_404,
         plugin_crash_uses_500_handler,
-        security_crash_skips_500_handler
+        security_crash_skips_500_handler,
+        security_false_is_bare_401
     ].
 
 init_per_suite(Config) ->
@@ -57,6 +59,13 @@ init_per_suite(Config) ->
         #{
             prefix => "/errors/security",
             security => fun blog_api_errors_test_controller:crashing_security/1,
+            routes => [
+                {"/", fun blog_api_errors_test_controller:bare_status/1, #{methods => [get]}}
+            ]
+        },
+        #{
+            prefix => "/errors/refused",
+            security => fun blog_api_errors_test_controller:refusing_security/1,
             routes => [
                 {"/", fun blog_api_errors_test_controller:bare_status/1, #{methods => [get]}}
             ]
@@ -111,6 +120,9 @@ plugin_crash_uses_500_handler(_Config) ->
 
 security_crash_skips_500_handler(_Config) ->
     {500, _, <<>>} = get("/errors/security", "application/json").
+
+security_false_is_bare_401(_Config) ->
+    {401, _, <<>>} = get("/errors/refused", "application/json").
 
 get(Path, Accept) ->
     {ok, {{_, Status, _}, Headers, Body}} =

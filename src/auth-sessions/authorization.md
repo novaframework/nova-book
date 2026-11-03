@@ -241,13 +241,7 @@ The fixture also has a post by Alice; the scoped query only returns Bob's. The d
 
 ## The audit trail
 
-[Data Safety](../data-layer/data-safety.md#an-audit-log) records changes in `audit_log` with an actor that, until now, the code had to set by hand. `blog_security:authenticated/1` sets it on every authenticated request, browser or API:
-
-```erlang
-authenticated(#{id := Id} = User) ->
-    ok = kura_audit:set_actor(integer_to_binary(Id)),
-    {true, blog_accounts:actor(User)}.
-```
+[Data Safety](../data-layer/data-safety.md#an-audit-log) records changes in `audit_log` with an actor. [Authentication](authentication.md#security-functions) already sets the actor in `authenticated/1`, on every authenticated request, browser or API; the test below proves it.
 
 `kura_audit:set_actor/1` stores the actor in the process dictionary. Cowboy runs each request in its own process, so the security function, the controller and the Kura hooks all see it, and the next request starts clean.
 
@@ -278,12 +272,9 @@ rebar3 nova audit
   WARNINGS:
     POST /hello (blog_hello_controller) has no security
     POST /contact (blog_contact_controller) has no security
+    POST /api/tokens (blog_tokens_controller) has no security
     POST /login (blog_session_controller) has no security
     POST /register (blog_registration_controller) has no security
-    POST /api/tokens (blog_tokens_controller) has no security
-    PUT /api/tags/{id} (blog_tags_controller) has no security
-    DELETE /api/tags/{id} (blog_tags_controller) has no security
-    POST /api/tags (blog_tags_controller) has no security
     Wildcard method on /robots.txt (nova_file_controller) - all HTTP methods accepted
     ...
 
@@ -294,10 +285,10 @@ rebar3 nova audit
     GET /api/posts (blog_posts_controller) has no security
     ...
 
-  Summary: 17 warning(s), 14 info(s)
+  Summary: 14 warning(s), 11 info(s)
 ```
 
-Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The tag routes from [JSON APIs with Generators](../building-api/json-api.md) are a real gap: anyone can create, rename or delete tags. [Security](../production/security.md#tag-writes-need-an-admin) puts them behind an admin bearer token using the `manage_tags` policy above.
+Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The rest are the `/robots.txt` file route, which accepts every method. The post writes are gone from the list: they sit behind `require_bearer/1` now.
 
 ## Running the tests
 

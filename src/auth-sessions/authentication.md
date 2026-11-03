@@ -2,6 +2,10 @@
 
 The blog has users (from [Schemas & Migrations](../data-layer/schemas-migrations.md)) with hashed passwords, and a session we can trust (from [Sessions](sessions.md)). This chapter lets them register, log in and out in the browser, get bearer tokens for the JSON API, and stops anyone guessing passwords at speed. All of it is built on [nova_auth](https://hex.pm/packages/nova_auth) 0.2.
 
+```admonish note title="Pages from Part IV"
+The controllers here render HTML with `blog_view:render/3,4`, `blog_view:form/2` and `blog_view:forbidden/0`, from `.dtl` templates, and the routes include `blog_posts_html_controller`. Those come from [Building Pages](../views-templates/building-pages.md) in Part IV. Copy them from the companion app, or read that chapter first.
+```
+
 ## What nova_auth gives you
 
 `nova_auth` is a toolkit for password authentication on Kura, not a finished login system. The parts the blog uses:
@@ -262,6 +266,7 @@ A Nova route group's `security` function runs before the controller (see [Plugin
 -module(blog_security).
 
 -export([current_user/1, require_user/1, require_admin/1, require_bearer/1, bearer_token/1]).
+-export([session_actor/1]).
 
 current_user(Req) ->
     case session_actor(Req) of
@@ -279,16 +284,7 @@ require_user(Req) ->
     end.
 ```
 
-What a security function may return:
-
-| Return | Effect |
-|--------|--------|
-| `{true, Data}` | Continue; the controller finds `Data` under `auth_data` in the request |
-| `true` | Continue, with no `auth_data` |
-| `{redirect, Path}` | Send a 302 to `Path`, which must be a string: a binary crashes the handler |
-| `{false, Status, Headers, Body}` | Reply with that response |
-| `{false, Status, Headers}` | Reply with the app's status page for `Status` |
-| anything else, `false` included | Reply 401 with the status page |
+[Routing](../foundations/routing.md#security) lists what a security function may return. These two use `{true, Actor}` to continue with the actor under `auth_data`, plain `true` to continue without one, and `{redirect, "/login"}` (a string: a binary path crashes the handler).
 
 `current_user/1` never refuses: it is for pages anyone can see, where a logged-in reader gets more (the post page shows "Edit" to the author). `require_user/1` sends anonymous visitors to the login page with a flash. Both read the session through one function:
 
@@ -513,7 +509,7 @@ create(#{json := Params, auth_data := Actor}) ->
     end;
 ```
 
-`create_comment/1` does the same, and still calls `blog_notify:comment_created/3` from [Pub/Sub](../real-time/pubsub.md) after the insert. From here on the curl examples of Part II need a token. Get one:
+`create_comment/1` does the same. From here on the curl examples of Part II need a token. Get one:
 
 ```shell
 curl -s -X POST localhost:8080/api/tokens -H 'content-type: application/json' \
@@ -660,7 +656,7 @@ login_sets_session_and_redirects(_Config) ->
         nova_auth_actor:fetch(Req).
 ```
 
-The last two lines check that login caches the actor, with its `id`, in the session. The rate-limit tests call `blog_web:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_data_fixtures:token/1` issues a token directly and `request_as/3,4` sends it:
+The last two lines check that login caches the actor, with its `id`, in the session. The rate-limit tests call `blog_web:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_web:api_token/2` gets a token through `POST /api/tokens`, as a client would, and `blog_data_fixtures:request_as/3,4` sends it (`blog_data_fixtures:token/1` issues one directly, for tests that are not about logging in):
 
 ```erlang
 post_author_comes_from_token(Config) ->
