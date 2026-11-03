@@ -127,7 +127,7 @@ validate_password_length(CS, undefined) ->
     CS;
 validate_password_length(CS, Password) ->
     case unicode:characters_to_binary(Password) of
-        Password -> check_password_length(CS, string:length(Password));
+        Password -> check_password_length(CS, length(unicode:characters_to_list(Password)));
         _ -> kura_changeset:add_error(CS, password, ~"is not valid UTF-8")
     end.
 

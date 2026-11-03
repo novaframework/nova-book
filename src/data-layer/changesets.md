@@ -198,7 +198,7 @@ validate_password_length(CS, undefined) ->
     CS;
 validate_password_length(CS, Password) ->
     case unicode:characters_to_binary(Password) of
-        Password -> check_password_length(CS, string:length(Password));
+        Password -> check_password_length(CS, length(unicode:characters_to_list(Password)));
         _ -> kura_changeset:add_error(CS, password, ~"is not valid UTF-8")
     end.
 
@@ -227,7 +227,7 @@ scrub_password(#kura_changeset{changes = Changes, params = Params} = CS) ->
     }.
 ```
 
-- The length rule counts characters. Kura's `validate_length/3` counts bytes (it calls `byte_size/1` on a binary), and in UTF-8 a Japanese character is three bytes and an emoji four. With bytes, four emoji would pass a 12 minimum and a 40-character Japanese passphrase would fail a 72 maximum. `string:length/1` counts what a person sees as characters (grapheme clusters). It is only defined for valid UTF-8, so `unicode:characters_to_binary/1` checks that first: a valid binary comes back unchanged.
+- The length rule counts characters. Kura's `validate_length/3` counts bytes (it calls `byte_size/1` on a binary), and in UTF-8 a Japanese character is three bytes and an emoji four. With bytes, four emoji would pass a 12 minimum and a 40-character Japanese passphrase would fail a 72 maximum. The rule counts Unicode code points, the way NIST SP 800-63B does. `string:length/1` would count grapheme clusters instead, and an attacker could then hide thousands of combining marks behind one visible letter, sending a 40 KB "12-character" password to the hash function. `unicode:characters_to_binary/1` checks the encoding first (a valid binary comes back unchanged), then `unicode:characters_to_list/1` gives the code points to count.
 - The minimum is 12 because length is what makes a password hard to guess. The maximum is not about security: 72 is a limit of bcrypt, which ignores everything after the 72nd byte. `nova_auth` hashes with PBKDF2, which uses the whole password, so the blog allows long passphrases and only caps them at 1024 characters so a single request cannot hand the hasher megabytes.
 - `validate_confirmation(CS, password)` requires `password_confirmation` in the params to equal `password`.
 - `hash_password/1` only runs on a valid changeset, so we never spend time hashing a password that is about to be rejected. `nova_auth_password:hash/1` comes from `nova_auth` (add it to `deps` and to `applications` in `blog.app.src`) and produces a salted PBKDF2-SHA256 hash.

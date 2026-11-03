@@ -91,6 +91,10 @@ counts_password_characters_not_bytes() ->
         #{password => [~"should be at most 1024 character(s)"]},
         password_errors(binary:copy(~"a", 1025))
     ),
+    Combining = <<"a", (binary:copy(<<16#301/utf8>>, 2000))/binary, "bcdefghijkl">>,
+    ?assertEqual(
+        #{password => [~"should be at most 1024 character(s)"]}, password_errors(Combining)
+    ),
     ?assertEqual(
         #{password => [~"is not valid UTF-8"]}, password_errors(<<"correct horse ", 255>>)
     ).
