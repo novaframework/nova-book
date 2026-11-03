@@ -15,5 +15,16 @@ routes(_Environment) ->
                 {"/", fun blog_main_controller:index/1, #{methods => [get]}},
                 {"/heartbeat", fun(_) -> {status, 200} end, #{methods => [get]}}
             ]
+        },
+        #{
+            prefix => "/api",
+            security => false,
+            routes => [
+                {"/posts", fun blog_posts_controller:index/1, #{methods => [get]}},
+                {"/posts", fun blog_posts_controller:create/1, #{methods => [post]}},
+                {"/posts/:id", fun blog_posts_controller:show/1, #{methods => [get]}},
+                {"/posts/:id", fun blog_posts_controller:update/1, #{methods => [put]}},
+                {"/posts/:id", fun blog_posts_controller:delete/1, #{methods => [delete]}}
+            ]
         }
     ].
