@@ -76,7 +76,7 @@ filter_posts_by_tag(Config) ->
 invalid_tag_is_rejected(Config) ->
     Post = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Tagged"}),
     {error, CS} = blog_posts:tag_post(Post, [~"Not Valid"]),
-    #{name := [~"has invalid format"]} = blog_json:errors(CS).
+    #{name := [~"has invalid format"]} = blog_api_json:errors(CS).
 
 embed_round_trips_as_jsonb(Config) ->
     Metadata = #{
@@ -102,9 +102,9 @@ embed_validation_errors_reach_the_parent(_Config) ->
         }
     }),
     #{cover_image_url := [~"has invalid format"], reading_minutes := [~"must be greater than 0"]} =
-        blog_json:errors(CS),
+        blog_api_json:errors(CS),
     Bad = blog_post:changeset(#{}, #{~"title" => ~"Hello", ~"body" => ~"x", ~"metadata" => [1]}),
-    #{metadata := [~"expected a map"]} = blog_json:errors(Bad).
+    #{metadata := [~"expected a map"]} = blog_api_json:errors(Bad).
 
 api_tags_and_metadata(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{

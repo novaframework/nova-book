@@ -98,7 +98,7 @@ registration_validates_fields(_Config) ->
     #{
         email := [~"has invalid format"],
         username := [~"should be at least 2 character(s)", ~"has invalid format"]
-    } = blog_json:errors(CS),
+    } = blog_api_json:errors(CS),
     false = maps:is_key(role, CS#kura_changeset.changes).
 
 registration_needs_matching_confirmation(_Config) ->
@@ -118,12 +118,12 @@ unique_email_becomes_changeset_error(_Config) ->
 errors_render_as_json_map(_Config) ->
     CS = blog_post:changeset(#{}, #{~"title" => ~"Hi"}),
     #{title := [~"should be at least 3 character(s)"], body := [~"can't be blank"]} =
-        blog_json:errors(CS),
+        blog_api_json:errors(CS),
     {error, #kura_changeset{action = insert}} = blog_repo:insert(CS).
 
 schemaless_changeset_validates_query_params(_Config) ->
     {error, CS} = blog_posts:list_posts(#{~"page" => ~"0", ~"page_size" => ~"abc"}),
-    #{page := [~"must be greater than 0"], page_size := [_]} = blog_json:errors(CS),
+    #{page := [~"must be greater than 0"], page_size := [_]} = blog_api_json:errors(CS),
     {ok, #{page := 1, page_size := 10}} = blog_posts:list_posts(#{}).
 
 registration(Overrides) ->

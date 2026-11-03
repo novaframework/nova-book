@@ -110,7 +110,9 @@ update_writes_only_changes(Config) ->
     0 = map_size(CS#kura_changeset.changes),
     {ok, Updated} = blog_repo:update(CS),
     {error, CS1} = blog_posts:update_post(Updated, #{~"title" => ~""}),
-    #{title := [~"can't be blank", ~"should be at least 3 character(s)"]} = blog_json:errors(CS1).
+    #{title := [~"can't be blank", ~"should be at least 3 character(s)"]} = blog_api_json:errors(
+        CS1
+    ).
 
 delete_removes_the_row(Config) ->
     Alice = ?config(alice, Config),

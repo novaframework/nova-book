@@ -1,4 +1,4 @@
--module(blog_json).
+-module(blog_api_json).
 -include_lib("kura/include/kura.hrl").
 
 -export([post/1, comment/1, user/1, errors/1, datetime/1]).

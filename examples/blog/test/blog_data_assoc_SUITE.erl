@@ -83,7 +83,7 @@ cast_assoc_inserts_children_atomically(Config) ->
     Bad = Params#{~"comments" => [#{~"body" => ~"ok", ~"user_id" => BobId}, #{~"body" => ~""}]},
     {error, #kura_changeset{valid = false, assoc_changes = #{comments := [_, Failed]}}} =
         blog_posts:import_post(Alice, Bad#{~"title" => ~"Second import"}),
-    #{body := [~"can't be blank"], user_id := [~"can't be blank"]} = blog_json:errors(Failed),
+    #{body := [~"can't be blank"], user_id := [~"can't be blank"]} = blog_api_json:errors(Failed),
     {ok, [_]} = blog_repo:all(kura_query:from(blog_post)),
     {ok, 2} = kura_repo_worker:count(blog_repo, kura_query:from(blog_comment)).
 

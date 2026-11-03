@@ -56,7 +56,7 @@ transaction_rolls_back_on_exception(Config) ->
     {error, #kura_changeset{} = CS} = blog_posts:import_posts(?config(alice, Config), [
         #{~"title" => ~"One", ~"body" => ~"1"}, #{~"title" => ~"Two"}
     ]),
-    #{body := [~"can't be blank"]} = blog_json:errors(CS),
+    #{body := [~"can't be blank"]} = blog_api_json:errors(CS),
     {ok, 0} = blog_repo:count(kura_query:from(blog_post)).
 
 returning_an_error_does_not_roll_back(Config) ->
