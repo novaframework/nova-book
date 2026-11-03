@@ -9,6 +9,7 @@
                 config => #{file => "log/erlang.log"}}}
             ]}
           ]},
+ {blog, [{json_lib, blog_json}]},
  {nova, [
          {use_stacktrace, false},
          {environment, prod},
