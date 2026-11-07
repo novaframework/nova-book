@@ -7,6 +7,7 @@
     every_config_parses/1,
     every_config_declares_the_repo/1,
     every_config_points_shigoto_at_the_repo/1,
+    prod_purges_deleted_posts_every_night/1,
     prod_secrets_come_from_the_environment/1,
     prod_numbers_have_defaults/1,
     prod_is_hardened/1,
@@ -20,6 +21,7 @@ all() ->
         every_config_parses,
         every_config_declares_the_repo,
         every_config_points_shigoto_at_the_repo,
+        prod_purges_deleted_posts_every_night,
         prod_secrets_come_from_the_environment,
         prod_numbers_have_defaults,
         prod_is_hardened,
@@ -46,6 +48,13 @@ declares_repo(#{backend := kura_backend_postgres, host := _, database := _, port
 
 every_config_points_shigoto_at_the_repo(_Config) ->
     [blog_repo = env(File, shigoto, repo) || File <- config_files()].
+
+prod_purges_deleted_posts_every_night(_Config) ->
+    [{~"purge-deleted-posts", Schedule, blog_purge_worker, #{~"days" := 30}}] =
+        env(prod(), shigoto, cron),
+    {ok, _} = shigoto_cron_parser:parse(Schedule),
+    ~"maintenance" = blog_purge_worker:queue(),
+    true = lists:member({~"maintenance", 1}, env(prod(), shigoto, queues)).
 
 prod_secrets_come_from_the_environment(_Config) ->
     File = prod(),

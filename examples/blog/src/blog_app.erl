@@ -7,7 +7,6 @@ start(_StartType, _StartArgs) ->
     ok = require_encryption_key(),
     {ok, _} = kura_migrator:migrate(blog_repo),
     ok = migrate_jobs(),
-    ok = blog_jobs:schedule_maintenance(),
     ok = nova_handlers:register_handler(text, fun blog_text_handler:handle/3),
     ok = opentelemetry_nova:setup(),
     ok = opentelemetry_kura:setup(),

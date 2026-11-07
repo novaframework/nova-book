@@ -16,8 +16,7 @@
     dependent_job_waits_for_its_predecessor/1,
     shigoto_transaction_groups_job_inserts/1,
     sandbox_does_not_hold_job_inserts/1,
-    purge_worker_schedules_its_next_run/1,
-    next_purge_is_at_three_in_the_morning/1
+    purge_worker_keeps_recent_deletions/1
 ]).
 
 all() ->
@@ -34,8 +33,7 @@ all() ->
         dependent_job_waits_for_its_predecessor,
         shigoto_transaction_groups_job_inserts,
         sandbox_does_not_hold_job_inserts,
-        purge_worker_schedules_its_next_run,
-        next_purge_is_at_three_in_the_morning
+        purge_worker_keeps_recent_deletions
     ].
 
 init_per_suite(Config) ->
@@ -203,18 +201,9 @@ sandbox_does_not_hold_job_inserts(_Config) ->
         end,
     shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
 
-purge_worker_schedules_its_next_run(_Config) ->
-    {ok, #{~"purged" := 0}} = shigoto:perform_job(blog_purge_worker, #{~"days" => 30}),
-    [#{scheduled_at := At}] = shigoto_testing:all_enqueued(#{
-        worker => blog_purge_worker, state => ~"available"
-    }),
-    {_Date, {3, 0, 0}} = truncate(At),
-    {ok, {conflict, _}} = blog_purge_worker:schedule_next().
-
-next_purge_is_at_three_in_the_morning(_Config) ->
-    {{2026, 11, 3}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {1, 30, 0}}),
-    {{2026, 11, 4}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {3, 0, 0}}),
-    {{2027, 1, 1}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 12, 31}, {22, 0, 0}}).
+purge_worker_keeps_recent_deletions(Config) ->
+    {ok, _} = blog_posts:delete_post(?config(post, Config)),
+    {ok, #{~"purged" := 0}} = shigoto:perform_job(blog_purge_worker, #{~"days" => 30}).
 
 hours_from_now(Hours) ->
     Now = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
