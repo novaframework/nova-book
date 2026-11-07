@@ -2,6 +2,7 @@
 
 -export([start/0, start/1, checkout/0, checkin/0, user/1, post/2, url/1, request/3, request/2]).
 -export([token/1, request_as/3, request_as/4, session/1, admin/1]).
+-export([log_in/3, api_token/3, reset_rate_limit/0]).
 
 start() ->
     start([]).
@@ -56,6 +57,36 @@ session(User) ->
     {ok, SessionId} = nova_session:generate_session_id(),
     ok = nova_session_ets:set_value(SessionId, ~"user_token", token(User)),
     SessionId.
+
+log_in(Config, Email, Password) ->
+    Session = nova_test:session(Config),
+    {ok, #{status := 200} = Form} = nova_test:get("/login", Session),
+    {ok, #{status := 302} = Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", Email},
+                {~"password", Password}
+            ]
+        },
+        Session
+    ),
+    "/posts" = nova_test:header("location", Resp),
+    Session.
+
+api_token(Config, Email, Password) ->
+    Credentials = #{~"email" => Email, ~"password" => Password},
+    {ok, #{status := 201} = Resp} = nova_test:post("/api/tokens", #{json => Credentials}, Config),
+    #{~"token" := Token} = nova_test:json(Resp),
+    Token.
+
+reset_rate_limit() ->
+    try
+        seki:reset(blog_login_limiter, {127, 0, 0, 1})
+    catch
+        error:{limiter_not_found, blog_login_limiter} -> ok
+    end.
 
 token(User) ->
     {ok, Token} = blog_accounts:issue_token(User),

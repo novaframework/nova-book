@@ -1,6 +1,6 @@
 -module(blog_auth_api_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
 -export([
@@ -31,55 +31,62 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 
 end_per_testcase(_Case, _Config) ->
     blog_data_fixtures:checkin().
 
-token_is_issued_for_valid_credentials(_Config) ->
-    {201, Headers, Body, _} = blog_web:post_json(#{}, "/api/tokens", #{
-        email => ~"alice@example.com", password => ~"correct horse battery"
-    }),
-    "application/json" = blog_web:header("content-type", Headers),
-    #{~"token" := Token, ~"token_type" := ~"Bearer", ~"expires_in" := 1209600} = json:decode(Body),
+token_is_issued_for_valid_credentials(Config) ->
+    Credentials = #{~"email" => ~"alice@example.com", ~"password" => ~"correct horse battery"},
+    {ok, Resp} = nova_test:post("/api/tokens", #{json => Credentials}, Config),
+    ?assertStatus(201, Resp),
+    ?assertHeader("content-type", "application/json", Resp),
+    #{~"token" := Token, ~"token_type" := ~"Bearer", ~"expires_in" := 1209600} =
+        nova_test:json(Resp),
     ?assertEqual(44, byte_size(Token)).
 
-token_request_with_wrong_password_is_401(_Config) ->
-    {401, _, Body, _} = blog_web:post_json(#{}, "/api/tokens", #{
-        email => ~"alice@example.com", password => ~"wrong"
-    }),
-    #{~"error" := ~"invalid email or password"} = json:decode(Body).
+token_request_with_wrong_password_is_401(Config) ->
+    Credentials = #{~"email" => ~"alice@example.com", ~"password" => ~"wrong"},
+    {ok, Resp} = nova_test:post("/api/tokens", #{json => Credentials}, Config),
+    ?assertStatus(401, Resp),
+    ?assertJson(#{~"error" := ~"invalid email or password"}, Resp).
 
-token_request_without_fields_is_400(_Config) ->
-    {400, _, _, _} = blog_web:post_json(#{}, "/api/tokens", #{email => ~"alice@example.com"}).
+token_request_without_fields_is_400(Config) ->
+    Credentials = #{json => #{~"email" => ~"alice@example.com"}},
+    {ok, Resp} = nova_test:post("/api/tokens", Credentials, Config),
+    ?assertStatus(400, Resp).
 
-token_is_stored_hashed(_Config) ->
-    Token = blog_web:api_token("alice@example.com", "correct horse battery"),
+token_is_stored_hashed(Config) ->
+    Token = blog_data_fixtures:api_token(Config, ~"alice@example.com", ~"correct horse battery"),
     {ok, [#{token := Stored, context := ~"session"}]} =
         blog_repo:all(kura_query:from(blog_user_token)),
     ?assertNotEqual(Token, Stored),
     ?assertEqual(nova_auth_token:hash(Token), Stored).
 
-write_without_token_is_401(_Config) ->
-    {401, Headers, Body, _} = blog_web:post_json(#{}, "/api/posts", #{title => ~"Nope"}),
-    "Bearer" = blog_web:header("www-authenticate", Headers),
-    #{~"error" := ~"missing bearer token"} = json:decode(Body).
+write_without_token_is_401(Config) ->
+    {ok, Resp} = nova_test:post("/api/posts", #{json => #{~"title" => ~"Nope"}}, Config),
+    ?assertStatus(401, Resp),
+    ?assertHeader("www-authenticate", "Bearer", Resp),
+    ?assertJson(#{~"error" := ~"missing bearer token"}, Resp).
 
-write_with_unknown_token_is_401(_Config) ->
-    Forged = [{"authorization", "Bearer bm90IGEgcmVhbCB0b2tlbg=="}],
-    {401, _, Body, _} = blog_web:post_json(#{}, "/api/posts", #{title => ~"Nope"}, Forged),
-    #{~"error" := ~"invalid or expired token"} = json:decode(Body),
-    Garbage = [{"authorization", "Bearer !!!"}],
-    {401, _, _, _} = blog_web:post_json(#{}, "/api/posts", #{title => ~"Nope"}, Garbage).
+write_with_unknown_token_is_401(Config) ->
+    Forged = #{
+        json => #{~"title" => ~"Nope"},
+        headers => [{~"authorization", ~"Bearer bm90IGEgcmVhbCB0b2tlbg=="}]
+    },
+    {ok, Resp} = nova_test:post("/api/posts", Forged, Config),
+    ?assertStatus(401, Resp),
+    ?assertJson(#{~"error" := ~"invalid or expired token"}, Resp),
+    Garbage = Forged#{headers => [{~"authorization", ~"Bearer !!!"}]},
+    {ok, #{status := 401}} = nova_test:post("/api/posts", Garbage, Config).
 
 reads_are_public(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{
@@ -92,26 +99,35 @@ reads_are_public(Config) ->
 
 post_author_comes_from_token(Config) ->
     #{id := AliceId} = ?config(alice, Config),
-    Token = blog_web:api_token("alice@example.com", "correct horse battery"),
+    Token = blog_data_fixtures:api_token(Config, ~"alice@example.com", ~"correct horse battery"),
     {201, #{~"user_id" := AliceId}} = blog_data_fixtures:request_as(Token, post, "/api/posts", #{
         title => ~"Mine", body => ~"Written by Alice", user_id => AliceId + 1000
     }).
 
-revoked_token_is_rejected(_Config) ->
-    Token = blog_web:api_token("alice@example.com", "correct horse battery"),
+revoked_token_is_rejected(Config) ->
+    Token = blog_data_fixtures:api_token(Config, ~"alice@example.com", ~"correct horse battery"),
     {204, <<>>} = blog_data_fixtures:request_as(Token, delete, "/api/tokens"),
     {401, #{~"error" := ~"invalid or expired token"}} =
         blog_data_fixtures:request_as(Token, post, "/api/posts", #{title => ~"Late", body => ~"x"}),
     {ok, []} = blog_repo:all(kura_query:from(blog_user_token)).
 
-token_requests_share_the_login_rate_limit(_Config) ->
-    Wrong = #{email => ~"alice@example.com", password => ~"guess"},
-    [{401, _, _, _} = blog_web:post_json(#{}, "/api/tokens", Wrong) || _ <- lists:seq(1, 5)],
-    {429, _, Limited, _} = blog_web:post_json(#{}, "/api/tokens", Wrong),
-    #{~"error" := ~"too many requests"} = json:decode(Limited),
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    {429, _, _, _} = blog_web:post_form(Jar, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", "correct horse battery"}
-    ]).
+token_requests_share_the_login_rate_limit(Config) ->
+    Wrong = #{json => #{~"email" => ~"alice@example.com", ~"password" => ~"guess"}},
+    [{ok, #{status := 401}} = nova_test:post("/api/tokens", Wrong, Config) || _ <- lists:seq(1, 5)],
+    {ok, Limited} = nova_test:post("/api/tokens", Wrong, Config),
+    ?assertStatus(429, Limited),
+    ?assertJson(#{~"error" := ~"too many requests"}, Limited),
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    {ok, Login} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ~"correct horse battery"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(429, Login).

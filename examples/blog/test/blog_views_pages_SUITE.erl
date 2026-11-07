@@ -1,6 +1,6 @@
 -module(blog_views_pages_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
 -export([
@@ -19,7 +19,7 @@
     stale_edit_is_rejected/1
 ]).
 
--define(PASSWORD, "correct horse battery").
+-define(PASSWORD, ~"correct horse battery").
 
 all() ->
     [
@@ -39,15 +39,14 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 
 end_per_testcase(_Case, _Config) ->
@@ -57,8 +56,10 @@ index_lists_published_posts(Config) ->
     Alice = ?config(alice, Config),
     _ = blog_data_fixtures:post(Alice, #{~"title" => ~"Hello Nova", ~"status" => ~"published"}),
     _ = blog_data_fixtures:post(Alice, #{~"title" => ~"Unfinished"}),
-    {200, Headers, Body, _} = blog_web:get(#{}, "/posts"),
-    "text/html" = blog_web:header("content-type", Headers),
+    {ok, Resp} = nova_test:get("/posts", Config),
+    ?assertStatus(200, Resp),
+    ?assertHeader("content-type", "text/html", Resp),
+    Body = nova_test:body(Resp),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<title>Posts - Nova Blog</title>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"href=\"/login\"")),
     ?assertNotEqual(nomatch, binary:match(Body, ~">Hello Nova</a>")),
@@ -74,15 +75,16 @@ index_paginates(Config) ->
         })
      || N <- lists:seq(1, 12)
     ],
-    {200, _, Page1, _} = blog_web:get(#{}, "/posts"),
+    {ok, #{status := 200, body := Page1}} = nova_test:get("/posts", Config),
     ?assertNotEqual(nomatch, binary:match(Page1, ~"href=\"/posts?page=2\">Older")),
     ?assertEqual(nomatch, binary:match(Page1, ~"Newer")),
-    {200, _, Page2, _} = blog_web:get(#{}, "/posts?page=2"),
+    {ok, #{status := 200, body := Page2}} = nova_test:get("/posts?page=2", Config),
     ?assertNotEqual(nomatch, binary:match(Page2, ~"href=\"/posts?page=1\">Newer")),
     ?assertNotEqual(nomatch, binary:match(Page2, ~">Post 1</a>")).
 
-index_rejects_bad_page(_Config) ->
-    {400, _, _, _} = blog_web:get(#{}, "/posts?page=abc").
+index_rejects_bad_page(Config) ->
+    {ok, Resp} = nova_test:get("/posts?page=abc", Config),
+    ?assertStatus(400, Resp).
 
 post_page_escapes_and_formats(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{
@@ -90,61 +92,78 @@ post_page_escapes_and_formats(Config) ->
         ~"body" => ~"First paragraph.\n\nSecond & last.",
         ~"status" => ~"published"
     }),
-    {200, _, Body, _} = blog_web:get(#{}, "/posts/" ++ integer_to_list(Id)),
+    {ok, #{status := 200, body := Body}} = nova_test:get("/posts/" ++ integer_to_list(Id), Config),
     ?assertEqual(nomatch, binary:match(Body, ~"<script>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<p>First paragraph.</p>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<p>Second &amp; last.</p>")),
     assert_no_erlang_terms(Body).
 
-unknown_post_is_404(_Config) ->
-    {404, _, Body, _} = blog_web:get(#{}, "/posts/999999", [{"accept", "text/html"}]),
+unknown_post_is_404(Config) ->
+    Html = #{headers => [{~"accept", ~"text/html"}]},
+    {ok, #{status := 404, body := Body}} = nova_test:get("/posts/999999", Html, Config),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<h1>Not found</h1>")),
-    {404, _, _, _} = blog_web:get(#{}, "/posts/not-a-number").
+    {ok, #{status := 404}} = nova_test:get("/posts/not-a-number", Config).
 
-stylesheet_is_self_hosted(_Config) ->
-    {200, Headers, Css, _} = blog_web:get(#{}, "/assets/css/blog.css"),
-    "text/css" = blog_web:header("content-type", Headers),
-    ?assertNotEqual(nomatch, binary:match(Css, ~".post-card")),
-    {200, _, Page, _} = blog_web:get(#{}, "/posts"),
+stylesheet_is_self_hosted(Config) ->
+    {ok, Css} = nova_test:get("/assets/css/blog.css", Config),
+    ?assertStatus(200, Css),
+    ?assertHeader("content-type", "text/css", Css),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Css), ~".post-card")),
+    {ok, #{status := 200, body := Page}} = nova_test:get("/posts", Config),
     ?assertEqual(nomatch, binary:match(Page, [~"https://", ~"http://"])).
 
-new_post_requires_login(_Config) ->
-    {302, Headers, _, _} = blog_web:get(#{}, "/posts/new"),
-    "/login" = blog_web:header("location", Headers),
-    {403, _, _, _} = blog_web:post_form(#{}, "/posts", [{"title", "Sneaky"}]).
+new_post_requires_login(Config) ->
+    {ok, Resp} = nova_test:get("/posts/new", Config),
+    ?assertStatus(302, Resp),
+    ?assertHeader("location", "/login", Resp),
+    {ok, #{status := 403}} = nova_test:post("/posts", #{form => [{~"title", ~"Sneaky"}]}, Config).
 
-create_post_via_form(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Form, _} = blog_web:get(Jar, "/posts/new"),
+create_post_via_form(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, #{status := 200, body := Form}} = nova_test:get("/posts/new", Session),
     ?assertNotEqual(nomatch, binary:match(Form, ~"<option value=\"draft\" selected>")),
-    {302, Headers, _, _} = blog_web:post_form(Jar, "/posts", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"title", "Written in a browser"},
-        {"body", "Forms still work."},
-        {"status", "published"}
-    ]),
-    "/posts/" ++ Id = blog_web:header("location", Headers),
-    {200, _, Page, _} = blog_web:get(Jar, "/posts/" ++ Id),
+    {ok, Created} = nova_test:post(
+        "/posts",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"title", ~"Written in a browser"},
+                {~"body", ~"Forms still work."},
+                {~"status", ~"published"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Created),
+    "/posts/" ++ _ = Path = nova_test:header("location", Created),
+    {ok, #{status := 200, body := Page}} = nova_test:get(Path, Session),
     ?assertNotEqual(nomatch, binary:match(Page, ~"Post created.")),
     ?assertNotEqual(nomatch, binary:match(Page, ~"<h1>Written in a browser</h1>")),
-    {200, _, Again, _} = blog_web:get(Jar, "/posts/" ++ Id),
+    {ok, #{status := 200, body := Again}} = nova_test:get(Path, Session),
     ?assertEqual(nomatch, binary:match(Again, ~"Post created.")).
 
-create_post_without_csrf_token_is_403(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {403, _, _, _} = blog_web:post_form(Jar, "/posts", [{"title", "Forged"}, {"body", "x"}]),
+create_post_without_csrf_token_is_403(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    Forged = #{form => [{~"title", ~"Forged"}, {~"body", ~"x"}]},
+    {ok, #{status := 403}} = nova_test:post("/posts", Forged, Session),
     {ok, []} = blog_repo:all(kura_query:from(blog_post)).
 
-invalid_post_rerenders_form_with_errors(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Form, _} = blog_web:get(Jar, "/posts/new"),
-    {422, _, Body, _} = blog_web:post_form(Jar, "/posts", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"title", "Hi"},
-        {"body", ""},
-        {"status", "published"}
-    ]),
+invalid_post_rerenders_form_with_errors(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Form} = nova_test:get("/posts/new", Session),
+    {ok, #{status := 422, body := Body}} = nova_test:post(
+        "/posts",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"title", ~"Hi"},
+                {~"body", ~""},
+                {~"status", ~"published"}
+            ]
+        },
+        Session
+    ),
     ?assertNotEqual(nomatch, binary:match(Body, ~"value=\"Hi\"")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"should be at least 3 character(s)")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"can&#039;t be blank")),
@@ -155,8 +174,9 @@ edit_form_is_prefilled(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{
         ~"title" => ~"Old title", ~"status" => ~"published"
     }),
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Body, _} = blog_web:get(Jar, "/posts/" ++ integer_to_list(Id) ++ "/edit"),
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, #{status := 200, body := Body}} =
+        nova_test:get("/posts/" ++ integer_to_list(Id) ++ "/edit", Session),
     ?assertNotEqual(nomatch, binary:match(Body, ~"value=\"Old title\"")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<option value=\"published\" selected>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"name=\"lock_version\" value=\"1\"")),
@@ -165,17 +185,24 @@ edit_form_is_prefilled(Config) ->
 update_post_via_form(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Old title"}),
     Path = "/posts/" ++ integer_to_list(Id),
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Form, _} = blog_web:get(Jar, Path ++ "/edit"),
-    {302, Headers, _, _} = blog_web:post_form(Jar, Path, [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"lock_version", "1"},
-        {"title", "New title"},
-        {"body", "Body text"},
-        {"status", "draft"}
-    ]),
-    Path = blog_web:header("location", Headers),
-    {200, _, Page, _} = blog_web:get(Jar, Path),
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Form} = nova_test:get(Path ++ "/edit", Session),
+    {ok, Updated} = nova_test:post(
+        Path,
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"lock_version", ~"1"},
+                {~"title", ~"New title"},
+                {~"body", ~"Body text"},
+                {~"status", ~"draft"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Updated),
+    ?assertHeader("location", Path, Updated),
+    {ok, #{status := 200, body := Page}} = nova_test:get(Path, Session),
     ?assertNotEqual(nomatch, binary:match(Page, ~"Post updated.")),
     ?assertNotEqual(nomatch, binary:match(Page, ~"<h1>New title</h1>")).
 
@@ -183,17 +210,24 @@ stale_edit_is_rejected(Config) ->
     Post = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Shared"}),
     #{id := Id} = Post,
     Path = "/posts/" ++ integer_to_list(Id),
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Form, _} = blog_web:get(Jar, Path ++ "/edit"),
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Form} = nova_test:get(Path ++ "/edit", Session),
     {ok, _} = blog_posts:update_post(Post, #{~"title" => ~"Changed elsewhere"}),
-    {302, Headers, _, _} = blog_web:post_form(Jar, Path, [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"lock_version", "1"},
-        {"title", "My edit"},
-        {"body", "Body text"}
-    ]),
-    "/posts/" ++ _ = Edit = blog_web:header("location", Headers),
-    {200, _, Page, _} = blog_web:get(Jar, Edit),
+    {ok, Stale} = nova_test:post(
+        Path,
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"lock_version", ~"1"},
+                {~"title", ~"My edit"},
+                {~"body", ~"Body text"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Stale),
+    "/posts/" ++ _ = Edit = nova_test:header("location", Stale),
+    {ok, #{status := 200, body := Page}} = nova_test:get(Edit, Session),
     ?assertNotEqual(nomatch, binary:match(Page, ~"Someone else changed this post.")),
     {ok, #{title := ~"Changed elsewhere"}} = blog_repo:get(blog_post, Id).
 

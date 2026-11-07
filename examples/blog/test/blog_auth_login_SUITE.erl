@@ -1,6 +1,6 @@
 -module(blog_auth_login_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
 -export([
@@ -18,7 +18,7 @@
     login_is_rate_limited/1
 ]).
 
--define(PASSWORD, "correct horse battery").
+-define(PASSWORD, ~"correct horse battery").
 
 all() ->
     [
@@ -37,116 +37,177 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 
 end_per_testcase(_Case, _Config) ->
     blog_data_fixtures:checkin().
 
-login_page_has_csrf_token(_Config) ->
-    {200, Headers, Body, _} = blog_web:get(#{}, "/login"),
-    ?assertMatch(<<_:8, _/binary>>, blog_web:csrf_token(Body)),
-    ?assertEqual("text/html", blog_web:header("content-type", Headers)).
+login_page_has_csrf_token(Config) ->
+    {ok, Resp} = nova_test:get("/login", Config),
+    ?assertStatus(200, Resp),
+    ?assertMatch(<<_:8, _/binary>>, nova_test:csrf_token(Resp)),
+    ?assertHeader("content-type", "text/html", Resp).
 
-login_without_csrf_token_is_403(_Config) ->
-    {200, _, _, Jar} = blog_web:get(#{}, "/login"),
-    {403, _, ~"Forbidden - CSRF token invalid", _} =
-        blog_web:post_form(Jar, "/login", [{"email", "alice@example.com"}, {"password", ?PASSWORD}]).
+login_without_csrf_token_is_403(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    ?assert(is_binary(nova_test:csrf_token(Form))),
+    Login = #{form => [{~"email", ~"alice@example.com"}, {~"password", ?PASSWORD}]},
+    {ok, Resp} = nova_test:post("/login", Login, Session),
+    ?assertStatus(403, Resp),
+    ?assertBody(~"Forbidden - CSRF token invalid", Resp).
 
-login_with_wrong_password_rerenders_form(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    {422, _, Body, Jar1} = blog_web:post_form(Jar, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", "not the password"}
-    ]),
+login_with_wrong_password_rerenders_form(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    {ok, Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ~"not the password"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(422, Resp),
+    Body = nova_test:body(Resp),
     ?assertNotEqual(nomatch, binary:match(Body, ~"Invalid email or password.")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"value=\"alice@example.com\"")),
     ?assertEqual(nomatch, binary:match(Body, ~"not the password")),
-    {302, _, _, _} = blog_web:get(Jar1, "/posts/new").
+    {ok, NewPost} = nova_test:get("/posts/new", Session),
+    ?assertStatus(302, NewPost).
 
-login_with_unknown_email_rerenders_form(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    {422, _, Body, _} = blog_web:post_form(Jar, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "nobody@example.com"},
-        {"password", ?PASSWORD}
-    ]),
-    ?assertNotEqual(nomatch, binary:match(Body, ~"Invalid email or password.")).
+login_with_unknown_email_rerenders_form(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    {ok, Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"nobody@example.com"},
+                {~"password", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(422, Resp),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Resp), ~"Invalid email or password.")).
 
-login_sets_session_and_redirects(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    AnonymousId = maps:get("session_id", Jar),
-    {302, Headers, _, Jar1} = blog_web:post_form(Jar, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", ?PASSWORD}
-    ]),
-    "/posts" = blog_web:header("location", Headers),
-    ?assertNotEqual(AnonymousId, maps:get("session_id", Jar1)),
-    {200, _, Page, _} = blog_web:get(Jar1, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(Page, ~"Welcome back!")),
-    ?assertNotEqual(nomatch, binary:match(Page, ~"<span class=\"who\">alice</span>")),
-    {200, _, _, _} = blog_web:get(Jar1, "/posts/new"),
-    {302, _, _, _} = blog_web:get(Jar, "/posts/new"),
-    Req = #{nova_session_id => list_to_binary(maps:get("session_id", Jar1))},
+login_sets_session_and_redirects(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    AnonymousId = nova_test:cookie(~"session_id", Session),
+    {ok, Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Resp),
+    ?assertHeader("location", "/posts", Resp),
+    SessionId = nova_test:cookie(~"session_id", Session),
+    ?assertNotEqual(AnonymousId, SessionId),
+    {ok, Page} = nova_test:get("/posts", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Page), ~"Welcome back!")),
+    ?assertNotEqual(
+        nomatch, binary:match(nova_test:body(Page), ~"<span class=\"who\">alice</span>")
+    ),
+    {ok, NewPost} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, NewPost),
+    Anonymous = nova_test:set_cookie(~"session_id", AnonymousId, Config),
+    {ok, Refused} = nova_test:get("/posts/new", Anonymous),
+    ?assertStatus(302, Refused),
     {ok, #{id := _, provider := password, username := ~"alice", role := author}} =
-        nova_auth_actor:fetch(Req).
+        nova_auth_actor:fetch(#{nova_session_id => SessionId}).
 
-email_is_case_insensitive(_Config) ->
-    Jar = blog_web:log_in("  Alice@Example.COM ", ?PASSWORD),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new").
+email_is_case_insensitive(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"  Alice@Example.COM ", ?PASSWORD),
+    {ok, Resp} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, Resp).
 
-logout_revokes_the_session(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Page, _} = blog_web:get(Jar, "/posts"),
-    {302, Headers, _, Jar1} =
-        blog_web:post_form(Jar, "/logout", [{"_csrf_token", blog_web:csrf_token(Page)}]),
-    "/posts" = blog_web:header("location", Headers),
-    {200, _, After, _} = blog_web:get(Jar1, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(After, ~"You have been logged out.")),
-    ?assertNotEqual(nomatch, binary:match(After, ~"href=\"/login\"")),
-    {302, NewHeaders, _, _} = blog_web:get(Jar, "/posts/new"),
-    "/login" = blog_web:header("location", NewHeaders),
+logout_revokes_the_session(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    LoggedIn = nova_test:set_cookie(
+        ~"session_id", nova_test:cookie(~"session_id", Session), Config
+    ),
+    {ok, Page} = nova_test:get("/posts", Session),
+    {ok, Logout} = nova_test:post(
+        "/logout", #{form => [{~"_csrf_token", nova_test:csrf_token(Page)}]}, Session
+    ),
+    ?assertStatus(302, Logout),
+    ?assertHeader("location", "/posts", Logout),
+    {ok, After} = nova_test:get("/posts", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(After), ~"You have been logged out.")),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(After), ~"href=\"/login\"")),
+    {ok, Old} = nova_test:get("/posts/new", LoggedIn),
+    ?assertStatus(302, Old),
+    ?assertHeader("location", "/login", Old),
     {ok, []} = blog_repo:all(kura_query:from(blog_user_token)).
 
-logout_requires_csrf_token(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {403, _, _, _} = blog_web:post_form(Jar, "/logout", []),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new").
+logout_requires_csrf_token(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Logout} = nova_test:post("/logout", #{form => []}, Session),
+    ?assertStatus(403, Logout),
+    {ok, Page} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, Page).
 
-register_creates_account_and_logs_in(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/register"),
-    {302, Headers, _, Jar1} = blog_web:post_form(Jar, "/register", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "Bob@Example.com"},
-        {"username", "bob"},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ?PASSWORD}
-    ]),
-    "/posts" = blog_web:header("location", Headers),
-    {200, _, Page, _} = blog_web:get(Jar1, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(Page, ~"Welcome to the blog!")),
+register_creates_account_and_logs_in(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/register", Session),
+    {ok, Resp} = nova_test:post(
+        "/register",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"Bob@Example.com"},
+                {~"username", ~"bob"},
+                {~"password", ?PASSWORD},
+                {~"password_confirmation", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Resp),
+    ?assertHeader("location", "/posts", Resp),
+    {ok, Page} = nova_test:get("/posts", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Page), ~"Welcome to the blog!")),
     {ok, #{email := ~"bob@example.com", role := author}} =
         blog_repo:get_by(blog_user, [{username, ~"bob"}]).
 
-register_shows_changeset_errors(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/register"),
-    {422, _, Body, _} = blog_web:post_form(Jar, "/register", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "not-an-email"},
-        {"username", "Bob Smith"},
-        {"password", "short"},
-        {"password_confirmation", "different"}
-    ]),
+register_shows_changeset_errors(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/register", Session),
+    {ok, Resp} = nova_test:post(
+        "/register",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"not-an-email"},
+                {~"username", ~"Bob Smith"},
+                {~"password", ~"short"},
+                {~"password_confirmation", ~"different"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(422, Resp),
+    Body = nova_test:body(Resp),
     ?assertNotEqual(nomatch, binary:match(Body, ~"value=\"Bob Smith\"")),
     ?assertNotEqual(
         nomatch, binary:match(Body, ~"<span class=\"error\">has invalid format</span>")
@@ -154,25 +215,37 @@ register_shows_changeset_errors(_Config) ->
     ?assertEqual(nomatch, binary:match(Body, ~"value=\"short\"")),
     ?assertEqual(nomatch, binary:match(Body, ~"undefined")).
 
-register_rejects_duplicate_email(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/register"),
-    {422, _, Body, _} = blog_web:post_form(Jar, "/register", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"username", "alice2"},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ?PASSWORD}
-    ]),
-    ?assertNotEqual(nomatch, binary:match(Body, ~"has already been taken")).
+register_rejects_duplicate_email(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/register", Session),
+    {ok, Resp} = nova_test:post(
+        "/register",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"username", ~"alice2"},
+                {~"password", ?PASSWORD},
+                {~"password_confirmation", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(422, Resp),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Resp), ~"has already been taken")).
 
-login_is_rate_limited(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    Attempt = [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", "guess"}
-    ],
-    [{422, _, _, _} = blog_web:post_form(Jar, "/login", Attempt) || _ <- lists:seq(1, 5)],
-    {429, Headers, Body, _} = blog_web:post_form(Jar, "/login", Attempt),
-    ?assertMatch([_ | _], blog_web:header("retry-after", Headers)),
-    ?assertEqual(#{~"error" => ~"too many requests"}, json:decode(Body)).
+login_is_rate_limited(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    Attempt = #{
+        form => [
+            {~"_csrf_token", nova_test:csrf_token(Form)},
+            {~"email", ~"alice@example.com"},
+            {~"password", ~"guess"}
+        ]
+    },
+    [{ok, #{status := 422}} = nova_test:post("/login", Attempt, Session) || _ <- lists:seq(1, 5)],
+    {ok, Resp} = nova_test:post("/login", Attempt, Session),
+    ?assertStatus(429, Resp),
+    ?assertMatch([_ | _], nova_test:header("retry-after", Resp)),
+    ?assertEqual(#{~"error" => ~"too many requests"}, nova_test:json(Resp)).
