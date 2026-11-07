@@ -390,7 +390,7 @@ $ rebar3 kura lint_migrations
 ===> kura: no unsafe migration operations
 ```
 
-- `fmt --check` fails on any file erlfmt would change (run `rebar3 fmt` to fix it). Generated migrations and generator output need it once, see [Schemas & Migrations](../data-layer/schemas-migrations.md).
+- `fmt --check` fails on any file erlfmt would change (run `rebar3 fmt` to fix it). Migrations that `rebar3_kura` generates are already formatted.
 - `xref` reports calls to functions that do not exist and unused local functions, with the checks listed in `xref_checks`. `rebar3 as test xref` includes the test modules too.
 - `kura check` compares the schemas with the migrations and exits non-zero when a schema changed without a migration.
 - `kura lint_migrations` flags drops, renames and column type changes that break a running old version during a deploy ([Schemas & Migrations](../data-layer/schemas-migrations.md#rebar3-kura-lint_migrations)).
@@ -401,30 +401,16 @@ The blog runs `kura compile` as a pre-compile hook, so `rebar3 compile` (and `ct
 
 ### Dialyzer
 
-`rebar3 dialyzer` checks types across modules and dependencies. The first run builds a PLT (a cache of type information) for OTP and every dependency, so it is the slow one; later runs only analyse what changed. On the blog it reports eight warnings today:
+`rebar3 dialyzer` checks types across modules and dependencies. The first run builds a PLT (a cache of type information) for OTP and every dependency, so it is the slow one; later runs only analyse what changed. On the blog it is quiet:
 
 ```
-src/blog_stats.erl
-Line 48 Column 1: Function latest_post_per_author/0 has no local return
-Line 58 Column 45: The call kura_query:from(<<114,97,110,107,101,100,95,112,111,115,116,115>>) breaks the contract (atom() | module()) -> #kura_query{}
-Line 62 Column 1: Function activity_feed/1 has no local return
-Line 70 Column 25: The call kura_query:from(<<102,101,101,100>>) breaks the contract (atom() | module()) -> #kura_query{}
-Line 120 Column 1: Function run/1 will never be called
-
-src/controllers/blog_posts_controller.erl
-Line 47 Column 17: The pattern {'error', 'stale'} can never match the type {'error','read_only' | #kura_changeset{...}}
-
-src/controllers/blog_posts_html_controller.erl
-Line 68 Column 9: The pattern {'error', 'stale'} can never match the type {'error','read_only' | #kura_changeset{...}}
-
-src/live/blog_live_editor.erl
-Line 111 Column 9: The pattern {'error', 'stale'} can never match the type {'error','read_only' | #kura_changeset{...}}
-===> Warnings occurred running dialyzer: 8
+$ rebar3 dialyzer
+===> Dialyzer starting, this may take a while...
+...
+===> Analyzing 105 files with _build/default/rebar3_29.1.2_plt...
 ```
 
-All eight come from type specs in Kura 2.25 that are narrower than Kura's code. `kura_repo_worker:update/2` returns `{error, stale}` when optimistic locking finds a newer row ([Data Safety](../data-layer/data-safety.md)), and the tests prove it does, but its spec leaves it out, so Dialyzer concludes the blog's `{error, stale}` clauses are dead. `kura_query:from/1` is specced for schema modules, while a CTE (in [Advanced Queries](../data-layer/advanced-queries.md)) needs a binary name, which the query record accepts. Dialyzer trusts the specs and so decides those functions can never return.
-
-That is the usual way to read Dialyzer output: each warning is a disagreement between code and a spec, and the question is which one is wrong. Here it is the library's specs, and the fix belongs upstream. Silencing the warnings in the blog with `-dialyzer` attributes would also hide the next real one, so the blog leaves them visible. Run Dialyzer locally after changing types or upgrading Kura, and compare the list. It is not a CI gate until the count is zero.
+No warnings means Dialyzer found no call or pattern that contradicts a type spec. When one appears, read it as a disagreement between code and a spec, and ask which one is wrong. Sometimes it is the library's spec: Kura 2.25 left `{error, stale}` out of `update/2`'s spec, so Dialyzer called the blog's optimistic-lock clauses dead code, until Kura 2.30 fixed the spec. Silencing a warning with a `-dialyzer` attribute would also hide the next real one at the same spot, so fix the spec or the code instead.
 
 ## Test your production configuration
 
@@ -485,6 +471,15 @@ jobs:
       - name: Migration safety
         run: rebar3 kura lint_migrations
 
+      - name: Dialyzer PLT cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: examples/blog/_build/default/*_plt
+          key: plt-${{ runner.os }}-otp29-${{ hashFiles('examples/blog/rebar.lock') }}
+
+      - name: Dialyzer
+        run: rebar3 dialyzer
+
       - name: EUnit
         run: rebar3 eunit
 
@@ -501,9 +496,8 @@ Notes on the recipe:
 - Actions are pinned to commit SHAs with the version as a comment. A tag can be moved to other code; a SHA cannot. Dependabot understands this form and still proposes upgrades.
 - `kura check` runs before anything compiles, and the step after `compile` fails if the build generated a migration or changed a tracked file.
 - `epmd -daemon` is for `broadcast_reaches_other_nodes`, which starts a second node with `peer` ([Testing Real-Time](testing-realtime.md#across-nodes)).
+- Dialyzer's PLT is cached, keyed on `rebar.lock`, so it is rebuilt only when a dependency changes. The cache step names the full path because `working-directory` applies to `run` steps only.
 - A last step (not shown) uploads `_build/test/logs` when the job fails, so the CT logs can be read from the run page.
-
-To add Dialyzer once its warnings are gone, add a step with `rebar3 dialyzer`, and cache `_build/default/*_plt` keyed on `rebar.lock` so the PLT is not rebuilt on every run.
 
 ---
 
