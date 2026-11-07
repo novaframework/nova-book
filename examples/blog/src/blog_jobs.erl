@@ -3,21 +3,16 @@
 -include_lib("kernel/include/logger.hrl").
 
 -export([
-    schedule_maintenance/0,
     comment_added/1,
     account_email/2,
     schedule_publish/2,
     export_posts/1
 ]).
 
-schedule_maintenance() ->
-    case blog_purge_worker:schedule_next() of
-        {ok, _JobOrConflict} -> ok;
-        {error, Reason} -> ?LOG_WARNING(#{msg => ~"could not schedule purge", reason => Reason})
-    end.
-
 comment_added(#{id := CommentId}) ->
-    enqueue(#{worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}}).
+    shigoto:insert(#{
+        worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}
+    }).
 
 account_email(Kind, #{id := UserId}) when Kind =:= confirm; Kind =:= reset ->
     enqueue(#{

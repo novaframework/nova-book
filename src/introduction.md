@@ -38,7 +38,7 @@ Before starting, make sure you have:
 - **Docker** - for running PostgreSQL with Docker Compose
 - A text editor and a terminal
 
-The book uses Nova 0.18, Kura 2.25, Shigoto 1.9, Hikyaku 0.2 and Arizona 0.4. See the [Erlang Essentials](appendix/erlang-essentials.md) appendix for setup instructions.
+The book uses Nova 0.18, Kura 2.25, Shigoto 1.10, Hikyaku 0.2 and Arizona 0.4. See the [Erlang Essentials](appendix/erlang-essentials.md) appendix for setup instructions.
 ```
 
 ## How to read this book

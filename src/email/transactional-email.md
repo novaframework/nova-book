@@ -8,18 +8,21 @@ The jobs run on [Shigoto](https://hex.pm/packages/shigoto) (仕事, "work"), a j
 
 ## Shigoto in two minutes
 
-Shigoto is already a dependency (`{shigoto, "~> 1.9"}`) and listed in `applications` before `hikyaku` (see the [previous chapter](sending-email.md#adding-hikyaku)). It keeps its jobs in tables in the blog's own database and talks to it through the repo's connection pool. `config/dev_sys.config.src`:
+Shigoto is already a dependency (`{shigoto, "~> 1.10"}`) and listed in `applications` before `hikyaku` (see the [previous chapter](sending-email.md#adding-hikyaku)). It keeps its jobs in tables in the blog's own database and talks to it through the repo's connection pool. `config/dev_sys.config.src`:
 
 ```erlang
 {shigoto, [
     {repo, blog_repo},
-    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+    {cron, [
+        {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+    ]}
 ]},
 ```
 
-`repo` names the pool; `queues` lists the queues this node works on and how many jobs of each it runs at once. Mail gets its own queue, `mailers`, so a backlog of email never holds up other work.
+`repo` names the pool; `queues` lists the queues this node works on and how many jobs of each it runs at once. Mail gets its own queue, `mailers`, so a backlog of email never holds up other work. The `cron` entry is the nightly purge of deleted posts, from [Scheduling](../jobs/scheduling.md#cron).
 
-Add `ok = shigoto_migration:up(blog_repo),` right after `kura_migrator:migrate/1` in `blog_app:start/2`; [Background Jobs](../jobs/background-jobs.md#shigotos-tables) explains why.
+`blog_app:start/2` also calls `ok = migrate_jobs(),` right after `kura_migrator:migrate/1`, so that Shigoto's tables exist and its queues run on a brand new database; [Background Jobs](../jobs/background-jobs.md#shigotos-tables) shows it and explains why.
 
 A **worker** is a module with the `shigoto_worker` behaviour. Its `perform/1` gets the job's arguments and returns `ok`, `{error, Reason}` (try again later) or `{snooze, Seconds}` (not now, without counting as a failure). Arguments are stored as JSON, so they come back as a map with binary keys.
 
@@ -85,45 +88,40 @@ All the places the blog enqueues jobs go through one module, `src/blog_jobs.erl`
 
 ```erlang
 comment_added(#{id := CommentId}) ->
-    enqueue(#{worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}}).
+    shigoto:insert(#{
+        worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}
+    }).
 ```
 
-```erlang
-enqueue(#{worker := Worker, args := Args} = Job) ->
-    case shigoto:insert(Job) of
-        {ok, _JobOrConflict} ->
-            ok;
-        {error, Reason} ->
-            ?LOG_WARNING(#{
-                msg => ~"could not enqueue job", worker => Worker, args => Args, reason => Reason
-            })
-    end.
-```
-
-`shigoto:insert/1` returns `{ok, Job}`, or `{ok, {conflict, Existing}}` when the worker's `unique/0` finds the same job already queued. A failed enqueue is logged, not returned: the comment is already saved and the request should succeed. The arguments are only ids, so they are safe to log.
+`shigoto:insert/1` returns `{ok, Job}`, `{ok, {conflict, Existing}}` when the worker's `unique/0` finds the same job already queued, or `{error, Reason}`. `comment_added/1` hands that answer back, because the caller decides what a failed enqueue means.
 
 ### Calling it
 
-`blog_posts:add_comment/3` from [Part II](../data-layer/associations.md) enqueues the notification once the comment is stored:
+`blog_posts:add_comment/3` from [Part II](../data-layer/associations.md) now stores the comment and its notification together, in one `kura_multi` ([Transactions and Bulk Operations](../data-layer/transactions-bulk.md#multi-named-steps)):
 
 ```erlang
 add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
     CS = blog_comment:changeset(#{}, Params),
     CS1 = kura_changeset:put_change(CS, post_id, PostId),
-    case blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)) of
-        {ok, Comment} ->
-            ok = blog_jobs:comment_added(Comment),
-            {ok, Comment};
-        {error, _} = Error ->
-            Error
+    CS2 = kura_changeset:put_change(CS1, user_id, AuthorId),
+    Multi = kura_multi:insert(kura_multi:new(), comment, CS2),
+    Multi1 = kura_multi:run(Multi, notification, fun(#{comment := Comment}) ->
+        blog_jobs:comment_added(Comment)
+    end),
+    case blog_repo:multi(Multi1) of
+        {ok, #{comment := Comment}} -> {ok, Comment};
+        {error, comment, Changeset, _Completed} -> {error, Changeset};
+        {error, notification, Reason, _Completed} -> error({notification_not_enqueued, Reason})
     end.
 ```
 
-The controller does not change.
+Shigoto's jobs live in the same database, and a job inserted inside a Kura transaction joins it, so the comment and its job commit together or not at all. There is never a saved comment whose notification was lost, nor a notification for a comment that was rolled back.
 
-```admonish note title="Why not insert the comment and the job in one transaction?"
-It would be nice if the comment and its job committed together. With Shigoto 1.9.12 on Kura's minato pool they cannot: each library runs its transaction on its own connection, so a job inserted inside `blog_repo:transaction/1` is committed even when the transaction rolls back. [Part IX](../jobs/background-jobs.md#transactions) shows the test that proves it. The blog therefore enqueues after the insert, and the worker is written so that a job for a comment that does not exist is harmless.
-```
+- A comment that fails validation, or names a post that does not exist, stops the multi at the `comment` step. The caller gets the changeset, as before, and no job is inserted.
+- If the job cannot be stored, the comment is rolled back too, and `add_comment/3` raises. The request fails with a 500 and the reader can post again; nothing half-done is left behind.
+- Why a multi and not `blog_repo:transaction/1` with a `case` inside? A failed insert aborts the PostgreSQL transaction it runs in, so returning `{error, Changeset}` from the function would make the commit fail. The multi rolls back for you and returns the error.
+
+The controller does not change. [Part IX](../jobs/background-jobs.md#transactions) has the tests that show both directions of the shared transaction.
 
 ### Trying it
 
@@ -269,7 +267,7 @@ The rest of the worker:
 - A retry makes a fresh token. The unused one from the failed attempt is harmless: it is hashed and expires (3 days for confirmation, 1 hour for a reset).
 - `unique/0` counts `completed` jobs too and looks back 300 seconds, so each user gets at most one email of each kind per five minutes, however often someone submits the "forgot your password?" form with their address. `executing` is in the list so that a request arriving while the email is being sent does not queue a second one.
 
-`blog_jobs` enqueues it through the same `enqueue/1` as the comment notification. The guard turns the atom into a binary from a fixed set, so no user input becomes an atom:
+`blog_jobs` enqueues it. The guard turns the atom into a binary from a fixed set, so no user input becomes an atom:
 
 ```erlang
 account_email(Kind, #{id := UserId}) when Kind =:= confirm; Kind =:= reset ->
@@ -278,6 +276,20 @@ account_email(Kind, #{id := UserId}) when Kind =:= confirm; Kind =:= reset ->
         args => #{~"email" => atom_to_binary(Kind), ~"user_id" => UserId}
     }).
 ```
+
+```erlang
+enqueue(#{worker := Worker, args := Args} = Job) ->
+    case shigoto:insert(Job) of
+        {ok, _JobOrConflict} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(#{
+                msg => ~"could not enqueue job", worker => Worker, args => Args, reason => Reason
+            })
+    end.
+```
+
+Unlike the comment notification, a failed enqueue here is logged, not returned. The request should succeed either way: a password reset answers the same whatever happens, and a new user is already stored by `nova_auth` (below) when the confirmation is enqueued. The arguments are only ids, so they are safe to log.
 
 ### The emails
 
@@ -326,7 +338,7 @@ The link works once and expires in {{ hours }} hour{{ hours|pluralize }}. If you
 
 ### Accounts
 
-`blog_accounts:register/1` from Part III enqueues the confirmation once the user exists, exactly as `add_comment/3` does for comments:
+`blog_accounts:register/1` from Part III enqueues the confirmation once `nova_auth` has stored the user:
 
 ```erlang
 register(Params) ->
@@ -621,6 +633,8 @@ inline_mode_delivers_on_insert(Config) ->
     #hikyaku_email{to = [#hikyaku_address{address = ~"alice@example.com"}]} =
         blog_jobs_fixtures:receive_email().
 ```
+
+In `inline` mode the worker runs inside `add_comment/3`'s transaction, before the comment is committed. It finds the comment only because the sandbox is shared, so every process uses the test's connection. Outside a sandbox the worker would not see the uncommitted comment and would send nothing, one more reason `inline` is a test-only mode.
 
 **The real thing.** With no testing mode, jobs go to the database. The test posts a comment over HTTP, sees the job waiting, drains the queue and receives the email:
 

@@ -1,6 +1,6 @@
 # Cheat Sheet
 
-Quick reference for the APIs this book uses, at the versions it was tested with: Nova 0.18.1, Kura 2.25 with kura_postgres 1.1, nova_auth 0.2, Arizona 0.4 with arizona_nova 0.1, Shigoto 1.9, Hikyaku 0.2 and nova_test 0.3. Each section links to the chapter that explains it.
+Quick reference for the APIs this book uses, at the versions it was tested with: Nova 0.18.1, Kura 2.30 with kura_postgres 1.1, nova_auth 0.2, Arizona 0.4 with arizona_nova 0.1, Shigoto 1.10, Hikyaku 0.3 and nova_test 0.3. Each section links to the chapter that explains it.
 
 ## Routing
 
@@ -488,7 +488,7 @@ perform(#{~"comment_id" := CommentId}) ->
     ok.
 ```
 
-`perform/1` returns `ok`, `{ok, Result}`, `{error, Reason}` (retry) or `{snooze, Seconds}` (snoozing uses an attempt). Optional callbacks: `queue/0`, `max_attempts/0` (3), `priority/0`, `timeout/0` (ms), `backoff(Attempt, Reason)` (seconds), `unique/0`, `tags/0`, `on_discard/2`, `middleware/0`, `rate_limit/0`, `concurrency/0`, `global_concurrency/0`, `circuit_breaker/0`.
+`perform/1` returns `ok`, `{ok, Result}`, `{error, Reason}` (retry) or `{snooze, Seconds}` (does not use up an attempt). Optional callbacks: `queue/0`, `max_attempts/0` (3), `priority/0`, `timeout/0` (ms), `backoff(Attempt, Reason)` (seconds), `unique/0`, `tags/0`, `on_discard/2`, `middleware/0`, `rate_limit/0`, `concurrency/0`, `global_concurrency/0`, `circuit_breaker/0`.
 
 ```erlang
 {ok, #{id := Id}} = shigoto:insert(#{
@@ -502,12 +502,15 @@ perform(#{~"comment_id" := CommentId}) ->
 |---|---|
 | `shigoto:insert(Job)`, `insert(Job, Opts)` | `{ok, Job}`, `{ok, {conflict, Existing}}` for a unique duplicate, or `{error, _}` |
 | `shigoto:insert_all(Jobs)` | `{ok, [Job]}` |
-| `shigoto:cancel(Id)`, `retry(Id)`, `cancel_by(Filters)`, `retry_by(Filters)` | filters: `worker`, `queue`, `tags`, `args` |
+| `shigoto:cancel(Id)`, `retry(Id)`, `cancel_by(Filters)`, `retry_by(Filters)` | filters: `worker`, `queue`, `tags`, `args`, `state`; `args` is refused with encryption on |
 | `shigoto:get_job(Id)` | `{ok, Job}` or `{error, _}` |
 | `shigoto:drain_queue(Queue)` | `ok`; runs due jobs now, in the caller |
-| `shigoto:pause_queue/1`, `resume_queue/1`, `health/0` | `ok`, `ok`, `{ok, Map}` |
+| `shigoto:pause_queue/1`, `resume_queue/1`, `health/0` | `ok`, `ok`, `{ok, Map}` (`{error, Map}` when unhealthy) |
+| `shigoto:transaction(Fun)` | `Fun`'s result; only an exception rolls back; jobs and Kura writes inside commit together |
+| `shigoto_cron:schedule_once()` | `ok`, `retry` or `{error, _}`; one cron pass now, for tests |
+| `shigoto_migration:up(Repo)` | `ok` or `{error, Reason}` |
 
-Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `tags`, `scheduled_at`, `meta`, `depends_on`, `batch`. Config: `{shigoto, [{repo, blog_repo}, {queues, [{~"default", 10}]}]}`. Enqueue after the Kura transaction commits; `shigoto:transaction/1` does not join a Kura transaction. Cron does not fire in 1.9.12; reschedule from the worker.
+Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `tags`, `scheduled_at`, `meta`, `depends_on`, `batch`. Config: `{shigoto, [{repo, blog_repo}, {queues, [{~"default", 10}]}, {cron, [{Name, ~"0 3 * * *", Worker, Args}]}]}`. A job inserted inside `blog_repo:transaction/1` or a `kura_multi` commits or rolls back with it (not inside `kura_sandbox`). Cron: one node per minute, minute from PostgreSQL, catch-up of at most 60 minutes, no backfill for a new entry, jobs go to the worker's `queue/0`.
 
 ## Testing
 

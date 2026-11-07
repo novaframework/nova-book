@@ -8,6 +8,7 @@
     every_config_declares_the_repo/1,
     every_config_points_shigoto_at_the_repo/1,
     every_config_wires_tracing/1,
+    prod_purges_deleted_posts_every_night/1,
     prod_secrets_come_from_the_environment/1,
     prod_numbers_have_defaults/1,
     prod_is_hardened/1,
@@ -22,6 +23,7 @@ all() ->
         every_config_declares_the_repo,
         every_config_points_shigoto_at_the_repo,
         every_config_wires_tracing,
+        prod_purges_deleted_posts_every_night,
         prod_secrets_come_from_the_environment,
         prod_numbers_have_defaults,
         prod_is_hardened,
@@ -55,6 +57,13 @@ every_config_wires_tracing(_Config) ->
 wires_tracing(File) ->
     #{stream_handlers := [otel_nova_stream_h | _]} = env(File, nova, cowboy_configuration),
     [{pre_request, otel_nova_plugin, #{}} | _] = env(File, nova, plugins).
+
+prod_purges_deleted_posts_every_night(_Config) ->
+    [{~"purge-deleted-posts", Schedule, blog_purge_worker, #{~"days" := 30}}] =
+        env(prod(), shigoto, cron),
+    {ok, _} = shigoto_cron_parser:parse(Schedule),
+    ~"maintenance" = blog_purge_worker:queue(),
+    true = lists:member({~"maintenance", 1}, env(prod(), shigoto, queues)).
 
 prod_secrets_come_from_the_environment(_Config) ->
     File = prod(),

@@ -15,7 +15,7 @@ The blog already depends on it in `rebar.config`:
 ```erlang
 {deps, [
     ...
-    {hikyaku, "~> 0.2"},
+    {hikyaku, "~> 0.3"},
     ...
 ]}.
 ```

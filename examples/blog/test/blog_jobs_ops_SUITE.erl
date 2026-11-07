@@ -10,7 +10,6 @@
     testing_mode_needs_the_confirmation_key/1,
     queue_process_runs_jobs_in_the_background/1,
     queues_can_be_paused_and_resumed/1,
-    cron_entries_do_not_fire/1,
     tables_are_created_at_boot/1
 ]).
 -export([forward_event/4]).
@@ -23,7 +22,6 @@ all() ->
         testing_mode_needs_the_confirmation_key,
         queue_process_runs_jobs_in_the_background,
         queues_can_be_paused_and_resumed,
-        cron_entries_do_not_fire,
         tables_are_created_at_boot
     ].
 
@@ -117,17 +115,6 @@ queues_can_be_paused_and_resumed(_Config) ->
         {error, not_found} = shigoto:pause_queue(~"nonexistent")
     after
         ok = shigoto:remove_queue(~"mailers")
-    end.
-
-cron_entries_do_not_fire(_Config) ->
-    Entry = {~"publish-every-minute", ~"* * * * *", blog_publish_worker, #{~"post_id" => 0}},
-    ok = application:set_env(shigoto, cron, [Entry]),
-    try
-        shigoto_cron ! check,
-        timer:sleep(500),
-        shigoto_testing:refute_enqueued(#{worker => blog_publish_worker})
-    after
-        application:unset_env(shigoto, cron)
     end.
 
 tables_are_created_at_boot(_Config) ->

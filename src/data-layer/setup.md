@@ -11,7 +11,7 @@ Three things go into `rebar.config`: the `kura` library, the `kura_postgres` bac
 ```erlang
 {deps, [
     {nova, "~> 0.18"},
-    {kura, "~> 2.25"},
+    {kura, "~> 2.30"},
     {kura_postgres, "~> 1.1"},
     %% Used for logging - Change if needed
     {flatlog, "0.1.2"}
@@ -21,7 +21,7 @@ Three things go into `rebar.config`: the `kura` library, the `kura_postgres` bac
 ```erlang
 {project_plugins, [
     ...
-    {rebar3_kura, "~> 0.16"},
+    {rebar3_kura, "~> 0.18"},
     {erlfmt, "~>1.7"}
 ]}.
 ```

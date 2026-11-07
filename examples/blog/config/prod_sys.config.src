@@ -25,7 +25,10 @@
  ]},
  {shigoto, [
      {repo, blog_repo},
-     {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+     {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+     {cron, [
+         {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+     ]}
  ]},
  {nova, [
      {environment, prod},

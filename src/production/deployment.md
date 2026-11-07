@@ -123,6 +123,8 @@ Two Kura settings matter in production:
 - Kura takes a Postgres advisory lock around migrations, so several instances booting at once run them one at a time. `{kura, [{migration_lock_timeout, 60000}]}` makes an instance give up after a minute instead of waiting forever behind a stuck one (the default is `infinity`).
 - By default the migrator first creates the database if it does not exist (`ensure_database`, default `true`). If your database user may not create databases, which is the usual production setup, create the database yourself and set `{kura, [{ensure_database, false}]}`.
 
+Shigoto migrates its own tables when its application starts, which is before `blog_app:start/2` runs. With the database unreachable it tries 5 times, up to 5 seconds apart, so a release can take about 45 seconds to boot before it starts with its job queues held back ([Shigoto's tables](../jobs/background-jobs.md#shigotos-tables)). On Kubernetes, give the pod a `startupProbe` so the liveness probe does not restart it during that window.
+
 Migrations that rewrite large tables lock them while they run, and the new code starts only after they finish. For those, deploy the schema change and the code that uses it separately.
 
 ## Health checks

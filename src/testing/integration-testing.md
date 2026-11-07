@@ -32,6 +32,7 @@ docker compose up -d
 
 ```erlang
  {kura, [
+     {migration_pool_ready_timeout, 35000},
      {repos, #{
          blog_repo => #{
              backend => kura_backend_postgres,
@@ -45,7 +46,7 @@ docker compose up -d
      }},
 ```
 
-- A separate `blog_test` database. Kura's migrator creates it on the first run and `blog_app:start/2` migrates it, so there is no setup step.
+- A separate `blog_test` database. Kura's migrator creates it on the first run and `blog_app:start/2` migrates it, so there is no setup step. The first run is slower: Shigoto retries its own migration for a few seconds while the database does not exist yet, and `migration_pool_ready_timeout` lets Kura wait for the pool afterwards ([Shigoto's tables](../jobs/background-jobs.md#shigotos-tables) explains both).
 - Port 8081, so the suites can run while `rebar3 nova serve` holds 8080.
 - `{queues, []}`: Shigoto starts no queue processes, so a job a test enqueues stays in the table until the test runs it on purpose (see [Operations](../jobs/operations.md)).
 - The mailer delivers to `hikyaku_adapter_test`; tests that want the emails point it at themselves.
@@ -99,7 +100,7 @@ end_per_testcase(_Case, _Config) ->
 
 The sandbox has limits, and each of them shows up in the blog's suites:
 
-- **Only Kura queries are in it.** Shigoto talks to the pool directly, so `shigoto_jobs` rows are committed for real. Jobs suites empty the table before checking out (`blog_jobs_fixtures:reset_jobs/0`, a `DELETE FROM shigoto_jobs` on the pool, see [Operations](../jobs/operations.md#the-database-and-the-sandbox)).
+- **Only Kura queries are in it.** Shigoto does not see the sandbox's connection, so `shigoto_jobs` rows are committed for real, even from inside a `blog_repo:transaction/1`. Jobs suites empty the table before checking out (`blog_jobs_fixtures:reset_jobs/0`, a `DELETE FROM shigoto_jobs` on the pool). The same thing means that a test of a job committing or rolling back with a Kura transaction proves nothing inside the sandbox; such tests run without it, in `blog_jobs_commit_SUITE`, and clean up after themselves (see [Operations](../jobs/operations.md#the-database-and-the-sandbox)).
 - **State outside PostgreSQL is not rolled back**: sessions in `nova_session_ets`, the login rate limiter's counters, pub/sub subscriptions, the notification log. Reset what a test depends on (next sections).
 - **Sequences are not rolled back**, so ids keep growing between tests. Never assert on a literal id; read it from the row you created.
 - **No parallel test cases.** With one shared connection, two cases at once would share a transaction. Do not put `parallel` in a suite's groups.

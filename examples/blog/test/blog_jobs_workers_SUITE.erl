@@ -14,11 +14,9 @@
     duplicate_notification_is_a_conflict/1,
     scheduled_publish_waits_until_due/1,
     dependent_job_waits_for_its_predecessor/1,
-    enqueue_inside_kura_transaction_is_not_rolled_back/1,
     shigoto_transaction_groups_job_inserts/1,
-    shigoto_transaction_does_not_cover_kura_writes/1,
-    purge_worker_schedules_its_next_run/1,
-    next_purge_is_at_three_in_the_morning/1
+    sandbox_does_not_hold_job_inserts/1,
+    purge_worker_keeps_recent_deletions/1
 ]).
 
 all() ->
@@ -33,11 +31,9 @@ all() ->
         duplicate_notification_is_a_conflict,
         scheduled_publish_waits_until_due,
         dependent_job_waits_for_its_predecessor,
-        enqueue_inside_kura_transaction_is_not_rolled_back,
         shigoto_transaction_groups_job_inserts,
-        shigoto_transaction_does_not_cover_kura_writes,
-        purge_worker_schedules_its_next_run,
-        next_purge_is_at_three_in_the_morning
+        sandbox_does_not_hold_job_inserts,
+        purge_worker_keeps_recent_deletions
     ].
 
 init_per_suite(Config) ->
@@ -131,8 +127,13 @@ snoozed_job_is_rescheduled(Config) ->
     ),
     ok = shigoto:drain_queue(~"mailers"),
     [#{id := JobId}] = shigoto_testing:all_enqueued(#{worker => blog_comment_notification_worker}),
-    {ok, #{state := ~"available", attempt := 1, errors := ~"[]", scheduled_at := At}} =
-        shigoto:get_job(JobId),
+    {ok, #{
+        state := ~"available",
+        attempt := 1,
+        max_attempts := 6,
+        errors := ~"[]",
+        scheduled_at := At
+    }} = shigoto:get_job(JobId),
     Delay = seconds_from_now(At),
     true = Delay > 50 andalso Delay =< 60.
 
@@ -174,20 +175,6 @@ dependent_job_waits_for_its_predecessor(Config) ->
     {ok, #{state := ~"completed", depends_on := []}} = shigoto:get_job(SecondJob),
     {ok, #{status := published}} = blog_repo:get(blog_post, SecondId).
 
-enqueue_inside_kura_transaction_is_not_rolled_back(_Config) ->
-    {aborted, _Job} =
-        try
-            blog_repo:transaction(fun() ->
-                {ok, Job} = shigoto:insert(#{
-                    worker => blog_publish_worker, args => #{~"post_id" => 1}
-                }),
-                throw({aborted, Job})
-            end)
-        catch
-            throw:Aborted -> Aborted
-        end,
-    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
-
 shigoto_transaction_groups_job_inserts(_Config) ->
     rolled_back =
         try
@@ -205,31 +192,23 @@ shigoto_transaction_groups_job_inserts(_Config) ->
         end,
     shigoto_testing:refute_enqueued(#{worker => blog_publish_worker}).
 
-shigoto_transaction_does_not_cover_kura_writes(Config) ->
-    #{id := PostId} = ?config(post, Config),
+sandbox_does_not_hold_job_inserts(_Config) ->
     rolled_back =
         try
-            shigoto:transaction(fun() ->
-                {ok, _} = blog_posts:delete_post(?config(post, Config)),
+            blog_repo:transaction(fun() ->
+                {ok, _} = shigoto:insert(#{
+                    worker => blog_publish_worker, args => #{~"post_id" => 1}
+                }),
                 throw(rolled_back)
             end)
         catch
             throw:rolled_back -> rolled_back
         end,
-    {error, not_found} = blog_repo:get(blog_post, PostId).
+    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
 
-purge_worker_schedules_its_next_run(_Config) ->
-    {ok, #{~"purged" := 0}} = shigoto:perform_job(blog_purge_worker, #{~"days" => 30}),
-    [#{scheduled_at := At}] = shigoto_testing:all_enqueued(#{
-        worker => blog_purge_worker, state => ~"available"
-    }),
-    {_Date, {3, 0, 0}} = truncate(At),
-    {ok, {conflict, _}} = blog_purge_worker:schedule_next().
-
-next_purge_is_at_three_in_the_morning(_Config) ->
-    {{2026, 11, 3}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {1, 30, 0}}),
-    {{2026, 11, 4}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {3, 0, 0}}),
-    {{2027, 1, 1}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 12, 31}, {22, 0, 0}}).
+purge_worker_keeps_recent_deletions(Config) ->
+    {ok, _} = blog_posts:delete_post(?config(post, Config)),
+    {ok, #{~"purged" := 0}} = shigoto:perform_job(blog_purge_worker, #{~"days" => 30}).
 
 hours_from_now(Hours) ->
     Now = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),

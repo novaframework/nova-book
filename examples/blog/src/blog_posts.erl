@@ -152,12 +152,15 @@ import_or_throw(Author, Params) ->
 add_comment(#{id := PostId}, #{id := AuthorId}, Params) ->
     CS = blog_comment:changeset(#{}, Params),
     CS1 = kura_changeset:put_change(CS, post_id, PostId),
-    case blog_repo:insert(kura_changeset:put_change(CS1, user_id, AuthorId)) of
-        {ok, Comment} ->
-            ok = blog_jobs:comment_added(Comment),
-            {ok, Comment};
-        {error, _} = Error ->
-            Error
+    CS2 = kura_changeset:put_change(CS1, user_id, AuthorId),
+    Multi = kura_multi:insert(kura_multi:new(), comment, CS2),
+    Multi1 = kura_multi:run(Multi, notification, fun(#{comment := Comment}) ->
+        blog_jobs:comment_added(Comment)
+    end),
+    case blog_repo:multi(Multi1) of
+        {ok, #{comment := Comment}} -> {ok, Comment};
+        {error, comment, Changeset, _Completed} -> {error, Changeset};
+        {error, notification, Reason, _Completed} -> error({notification_not_enqueued, Reason})
     end.
 
 import_post(#{id := AuthorId}, Params) ->
