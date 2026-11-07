@@ -17,7 +17,9 @@ schedule_maintenance() ->
     end.
 
 comment_added(#{id := CommentId}) ->
-    enqueue(#{worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}}).
+    shigoto:insert(#{
+        worker => blog_comment_notification_worker, args => #{~"comment_id" => CommentId}
+    }).
 
 account_email(Kind, #{id := UserId}) when Kind =:= confirm; Kind =:= reset ->
     enqueue(#{
