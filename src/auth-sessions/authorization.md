@@ -260,7 +260,7 @@ audit_log_records_the_actor(Config) ->
 
 ## Auditing the routes
 
-`rebar3 nova audit` lists every route without a security function. It is a quick way to spot a write route you forgot to protect. The output below is trimmed with `...`:
+`rebar3 nova audit` lists every route without a security function. It is a quick way to spot a write route you forgot to protect:
 
 ```shell
 rebar3 nova audit
@@ -269,26 +269,31 @@ rebar3 nova audit
 ```
 === Security Audit ===
 
+  Audited routes(dev) of blog. Not covered: static files and error pages, arizona_nova routes (served before nova_router). nova_apps read from ./config/dev_sys.config.src.
+
   WARNINGS:
-    POST /hello (blog_hello_controller) has no security
-    POST /contact (blog_contact_controller) has no security
     POST /api/tokens (blog_tokens_controller) has no security
+    POST /contact (blog_contact_controller) has no security
+    POST /hello (blog_hello_controller) has no security
     POST /login (blog_session_controller) has no security
     POST /register (blog_registration_controller) has no security
-    Wildcard method on /robots.txt (nova_file_controller) - all HTTP methods accepted
-    ...
 
   INFO:
     GET / (blog_main_controller) has no security
-    ...
-    GET /api/posts/{id} (blog_posts_controller) has no security
+    GET /about (blog_pages_controller) has no security
+    GET /about-us (blog_pages_controller) has no security
+    GET /about.md (blog_pages_controller) has no security
     GET /api/posts (blog_posts_controller) has no security
-    ...
+    GET /api/posts/{id} (blog_posts_controller) has no security
+    GET /contact (blog_contact_controller) has no security
+    GET /heartbeat (blog_router) has no security
+    GET /hello/{name} (blog_hello_controller) has no security
+    GET /version (blog_pages_controller) has no security
 
-  Summary: 14 warning(s), 11 info(s)
+  Summary: 5 warning(s), 10 info(s)
 ```
 
-Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The rest are the `/robots.txt` file route, which accepts every method. The post writes are gone from the list: they sit behind `require_bearer/1` now.
+Read the warnings one by one. `/login`, `/register` and `/api/tokens` are open on purpose: they are how you get credentials, and they are rate-limited. `/hello` and `/contact` are the demos from Part I. The post writes are gone from the list: they sit behind `require_bearer/1` now. Reading posts stays public, so `GET /api/posts` and `GET /api/posts/{id}` are listed as information.
 
 ## Running the tests
 

@@ -25,7 +25,7 @@ You write the controllers, templates and security functions. `nova_auth` is alre
 
 ## Why not the generators
 
-Two generators claim to do this for you: `rebar3 nova gen_auth` (rebar3_nova 0.13.4) and `rebar3 kura gen_auth` (rebar3_kura 0.16.5). Both write the same scaffold: a `blog_accounts` module, session and registration controllers, a token schema, a migration and a test suite. Run against the blog, the output does not fit:
+Two generators claim to do this for you: `rebar3 nova gen_auth` (rebar3_nova 0.14.0) and `rebar3 kura gen_auth` (rebar3_kura 0.16.5). Both write the same scaffold: a `blog_accounts` module, session and registration controllers, a token schema, a migration and a test suite. Run against the blog, the output does not fit:
 
 - It predates nova_auth. The accounts module hashes with `bcrypt`, which is not a dependency, and encodes JSON with `thoas`, which the blog does not use.
 - Its migration creates the `users` table again (Part II already has one) and runs `CREATE EXTENSION citext` for a column type it never uses.

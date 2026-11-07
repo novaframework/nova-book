@@ -414,27 +414,26 @@ rebar3 nova routes
 ```
 
 ```
-Host: '_'
-     ├─  _ /404 (blog, blog_error_controller:not_found/1)
-     ├─  /assets
-         └─  _ /[...] (blog, nova_file_controller:get_dir/1)
-     ├─  _ /robots.txt (blog, nova_file_controller:get_file/1)
-     ├─  /ops
-         └─  GET /status (blog, blog_ops_controller:status/1)
-     ├─  POST /contact (blog, blog_contact_controller:submit/1)
-     ├─  GET /contact (blog, blog_contact_controller:show/1)
-     ├─  POST /hello (blog, blog_hello_controller:create/1)
-         └─  OPTIONS /name (blog, blog_hello_controller:greet/1)
-         └─  GET /name (blog, blog_hello_controller:greet/1)
-     ├─  GET /version (blog, blog_pages_controller:version/1)
-     ├─  GET /about.md (blog, blog_pages_controller:about_markdown/1)
-     ├─  GET /about-us (blog, blog_pages_controller:about_moved/1)
-     ├─  GET /about (blog, blog_pages_controller:about/1)
-     ├─  GET /heartbeat (blog, blog_router:-routes/1-fun-0-/1)
-     └─  GET / (blog, blog_main_controller:index/1)
+any      (status 404)                             blog_error_controller:not_found/1
+get      /                                        blog_main_controller:index/1
+get      /about                                   blog_pages_controller:about/1
+get      /about-us                                blog_pages_controller:about_moved/1
+get      /about.md                                blog_pages_controller:about_markdown/1
+any      /assets/[...]                            nova_file_controller:get_dir/1
+get      /contact                                 blog_contact_controller:show/1
+post     /contact                                 blog_contact_controller:submit/1
+get      /heartbeat                               blog_router:-routes/1-fun-0-/1
+post     /hello                                   blog_hello_controller:create/1
+get      /hello/:name                             blog_hello_controller:greet/1
+options  /hello/:name                             blog_hello_controller:greet/1
+get      /ops/status                              blog_ops_controller:status/1
+any      /robots.txt                              nova_file_controller:get_file/1
+get      /version                                 blog_pages_controller:version/1
 ```
 
-The listing prints bindings without their colon (`/name` is `/hello/:name`). `rebar3 nova audit` reviews the same table from a security angle and flags write methods without a security function:
+Each line is a method, a path and the function that handles it. Routes are sorted by path; the status-code route sorts first, and static file routes accept `any` method. The heartbeat route is an anonymous function in the router, hence the odd-looking name.
+
+`rebar3 nova audit` reviews the same table from a security angle and flags write methods without a security function:
 
 ```shell
 rebar3 nova audit
@@ -443,22 +442,26 @@ rebar3 nova audit
 ```
 === Security Audit ===
 
+  Audited routes(dev) of blog. Not covered: static files and error pages, arizona_nova routes (served before nova_router). nova_apps read from ./config/dev_sys.config.src.
+
   WARNINGS:
-    Wildcard method on /robots.txt (nova_file_controller) - all HTTP methods accepted
-    PATCH /robots.txt (nova_file_controller) has no security
-    ...
-    POST /hello (blog_hello_controller) has no security
     POST /contact (blog_contact_controller) has no security
+    POST /hello (blog_hello_controller) has no security
 
   INFO:
     GET / (blog_main_controller) has no security
-    ...
+    GET /about (blog_pages_controller) has no security
+    GET /about-us (blog_pages_controller) has no security
+    GET /about.md (blog_pages_controller) has no security
     GET /contact (blog_contact_controller) has no security
+    GET /heartbeat (blog_router) has no security
+    GET /hello/{name} (blog_hello_controller) has no security
+    GET /version (blog_pages_controller) has no security
 
-  Summary: 11 warning(s), 9 info(s)
+  Summary: 2 warning(s), 8 info(s)
 ```
 
-Both `POST`s are public on purpose, and the contact form is protected by CSRF tokens instead (see [Plugins](plugins.md#csrf-protection)). Treat the audit as a checklist, not a verdict.
+The first line says what the audit leaves out: static files and status pages have no security function to check, and routes Arizona serves never reach Nova's router (Part VI). Both `POST`s are public on purpose, and the contact form is protected by CSRF tokens instead (see [Plugins](plugins.md#csrf-protection)). Treat the audit as a checklist, not a verdict.
 
 ---
 

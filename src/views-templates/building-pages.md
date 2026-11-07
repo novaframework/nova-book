@@ -129,8 +129,8 @@ errors(#kura_changeset{} = CS) ->
 
 Small templates included by others live in `src/views/partials/`. They compile to `flash_dtl`, `errors_dtl`, `post_card_dtl` and `post_form_dtl`.
 
-```admonish warning title="No leading underscore"
-Django projects often name partials `_flash.html`. Do not do that here: the scaffold's `.gitignore` contains `_*`, which ignores every file whose name starts with an underscore. Your partials would work on your machine and be missing from the repository. A `partials/` directory does the same job.
+```admonish note title="No leading underscore"
+Django projects often name partials `_flash.html`. A `partials/` directory does the same job and keeps the partials together. If your project was scaffolded by rebar3_nova before 0.13.5, its `.gitignore` contains `_*`, which ignores every file whose name starts with an underscore; replace that line with `_checkouts`, as newer scaffolds do.
 ```
 
 The flash partial, `src/views/partials/flash.dtl`:

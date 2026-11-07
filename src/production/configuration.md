@@ -261,7 +261,7 @@ These are the keys Nova 0.18.1 reads, checked against its source. Most live in t
 `cowboy_configuration` takes `port` (8080), `ip` (`{0,0,0,0}`), `use_ssl`, `ssl_port` (8443) and `ssl_options`, `stream_handlers`, `middleware_handlers` and `options` (Cowboy protocol options, default `#{compress => true}`). The blog sets the two handler lists explicitly because it adds its own stream handlers and Arizona's middleware.
 
 ```admonish warning title="Keys that do nothing"
-Older guides, the previous edition of this book and the scaffold's configs set `{dev_mode, true}` in the `nova` section. Nova 0.18.1 never reads it, so the blog's configs no longer have it. (`dev_mode` in the `relx` section is a different, real setting.) `{nova, [{json_lib, ...}]}` and `{nova, [{use_sessions, ...}]}` are silently ignored too: those two belong in the bootstrap application.
+Older guides, the previous edition of this book and projects scaffolded by rebar3_nova before 0.13.5 set `{dev_mode, true}` in the `nova` section. Nova 0.18.1 never reads it, so the blog's configs no longer have it. (`dev_mode` in the `relx` section is a different, real setting.) `{nova, [{json_lib, ...}]}` and `{nova, [{use_sessions, ...}]}` are silently ignored too: those two belong in the bootstrap application.
 ```
 
 ## Environment-specific routes
