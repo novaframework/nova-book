@@ -7,6 +7,9 @@
 
 %% The Environment-variable is defined in your sys.config in {nova, [{environment, Value}]}
 routes(_Environment) ->
+    [traced(Group) || Group <- route_groups()].
+
+route_groups() ->
     [
         #{
             prefix => "",
@@ -225,6 +228,11 @@ routes(_Environment) ->
             ]
         }
     ].
+
+traced(#{plugins := Plugins} = Group) ->
+    Group#{plugins => [{pre_request, otel_nova_plugin, #{}} | Plugins]};
+traced(Group) ->
+    Group.
 
 html_plugins() ->
     [

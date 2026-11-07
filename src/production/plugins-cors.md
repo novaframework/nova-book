@@ -91,10 +91,11 @@ with_user(Report, _Req) ->
 
 What it leaves out is deliberate. The path is logged without the query string, because query strings carry tokens and search terms (the confirmation links in Part VIII are an example). Headers, cookies and bodies are never logged. The user is identified by id, which `auth_data` holds once a security function accepted the request.
 
-The plugin goes into the global list, once as `pre_request` and once as `post_request`, around `nova_request_plugin`:
+The plugin goes into the global list, once as `pre_request` and once as `post_request`, around `nova_request_plugin` and after `otel_nova_plugin` from the [previous chapter](opentelemetry.md#the-handler-lists), so its lines carry the trace id:
 
 ```erlang
 {plugins, [
+    {pre_request, otel_nova_plugin, #{}},
     {pre_request, blog_request_logger, #{}},
     {pre_request, nova_request_plugin, #{decode_json_body => true,
                                          read_urlencoded_body => true}},
@@ -105,7 +106,7 @@ The plugin goes into the global list, once as `pre_request` and once as `post_re
 and, because the global list does not apply to groups with their own plugins, into the public `/api` group explicitly (below). With `nova_jsonlogger` and the OpenTelemetry context from the [previous chapter](opentelemetry.md), a line looks like this:
 
 ```json
-{"line":20,"pid":"<0.1402.0>","status":200,"time":1793698949603639,"file":".../src/plugins/blog_request_logger.erl","path":"/health","gl":"<0.1297.0>","msg":"request","level":"info","mfa":"blog_request_logger:post_request/4","method":"GET","otel_span_id":"2be424fb003bdcc6","otel_trace_flags":"01","otel_trace_id":"0dcb2eaa63888b6ae85d41e6905288c8","duration_us":1813}
+{"line":20,"pid":"<0.1524.0>","status":200,"time":1794090061721075,"file":".../src/plugins/blog_request_logger.erl","path":"/api/posts","gl":"<0.1373.0>","msg":"request","level":"info","mfa":"blog_request_logger:post_request/4","method":"GET","span_id":"ea0de880798a649c","trace_id":"ecfce5117418849fe60bccea453d8d24","otel_span_id":"ea0de880798a649c","otel_trace_flags":"01","otel_trace_id":"ecfce5117418849fe60bccea453d8d24","duration_us":2864}
 ```
 
 ### Testing a log line
@@ -230,7 +231,7 @@ preflight_headers(Origin, Options) ->
 - always sends `Vary: origin`;
 - never sends `Access-Control-Allow-Credentials`. The API authenticates with a bearer token that the front end adds explicitly, not with cookies, so no cross-origin request ever carries the blog's session.
 
-It runs first on the public `/api` group, whose routes accept `options` next to `get` (the router only lets a request reach the plugins if the route accepts its method):
+It runs first on the public `/api` group (after `otel_nova_plugin`, which the router's `traced/1` puts in front of every group's list, see [Observability](opentelemetry.md#route-groups-with-their-own-plugins)), whose routes accept `options` next to `get` (the router only lets a request reach the plugins if the route accepts its method):
 
 ```erlang
 #{

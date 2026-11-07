@@ -15,9 +15,7 @@ init([]) ->
     {ok, {#{strategy => one_for_all}, Children}}.
 
 metrics_server() ->
-    case application:get_env(blog, metrics_port) of
-        {ok, Port} ->
-            [#{id => blog_metrics, start => {blog_metrics, start_link, [Port]}}];
-        undefined ->
-            []
+    case application:get_env(blog, metrics) of
+        {ok, Opts} -> [otel_nova_prom_server:child_spec(Opts)];
+        undefined -> []
     end.
