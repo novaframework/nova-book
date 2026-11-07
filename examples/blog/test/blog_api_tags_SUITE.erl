@@ -25,8 +25,8 @@
     patch_is_405/1,
     writes_need_a_bearer_token/1,
     writes_need_the_admin_role/1,
-    openapi_spec_lists_api_routes/1,
-    generated_draft07_schema_is_rejected/1
+    openapi_spec_documents_the_api/1,
+    generated_schema_validates_a_create_body/1
 ]).
 
 all() ->
@@ -57,8 +57,8 @@ all() ->
         patch_is_405,
         writes_need_a_bearer_token,
         writes_need_the_admin_role,
-        openapi_spec_lists_api_routes,
-        generated_draft07_schema_is_rejected
+        openapi_spec_documents_the_api,
+        generated_schema_validates_a_create_body
     ].
 
 init_per_suite(Config) ->
@@ -232,21 +232,30 @@ writes_need_the_admin_role(Config) ->
     {403, _} = blog_data_fixtures:request_as(Author, delete, ?config(tag_path, Config)),
     {200, #{~"name" := ~"erlang"}} = blog_data_fixtures:request(get, ?config(tag_path, Config)).
 
-openapi_spec_lists_api_routes(_Config) ->
-    {200, #{~"openapi" := ~"3.0.3", ~"paths" := Paths}} =
-        blog_data_fixtures:request(get, "/api/openapi.json"),
-    #{~"post" := #{~"operationId" := ~"blog_tags_controller.create"}} = maps:get(
-        ~"/api/tags", Paths
-    ),
-    #{~"get" := _, ~"put" := _, ~"delete" := _} = maps:get(~"/api/tags/{id}", Paths),
+openapi_spec_documents_the_api(_Config) ->
+    {ok, {{_, 200, _}, Headers, Body}} =
+        httpc:request(get, {blog_data_fixtures:url("/api/openapi.json"), []}, [], [
+            {body_format, binary}
+        ]),
+    {"content-type", "application/json"} = lists:keyfind("content-type", 1, Headers),
+    #{~"openapi" := ~"3.0.3", ~"paths" := Paths, ~"components" := #{~"schemas" := Schemas}} =
+        json:decode(Body),
+    #{~"post" := #{~"operationId" := ~"blog_tags_controller.create", ~"responses" := Created}} =
+        maps:get(~"/api/tags", Paths),
+    #{~"201" := _, ~"400" := _} = Created,
+    #{~"delete" := #{~"responses" := #{~"204" := _, ~"404" := _}}, ~"get" := _, ~"put" := _} =
+        maps:get(~"/api/tags/{id}", Paths),
+    #{~"tag" := #{~"required" := [~"name"]} = Tag} = Schemas,
+    false = maps:is_key(~"$schema", Tag),
     [] = [Path || Path := _ <- Paths, not is_api_path(Path)].
 
-generated_draft07_schema_is_rejected(_Config) ->
+generated_schema_validates_a_create_body(_Config) ->
     Generated = json:decode(
-        ~'{"$schema":"http://json-schema.org/draft-07/schema#","properties":{"id":{"type":"integer"},"name":{"type":"string"}},"required":["id","name"],"type":"object"}'
+        ~'{"$schema":"http://json-schema.org/draft-06/schema#","properties":{"name":{"type":"string"}},"required":["name"],"type":"object"}'
     ),
-    {error, [{schema_invalid, _, {schema_unsupported, _}}]} =
-        jesse:validate_with_schema(Generated, #{~"name" => ~"otp"}).
+    {ok, _} = jesse:validate_with_schema(Generated, #{~"name" => ~"otp"}),
+    {error, [{data_invalid, _, missing_required_property, ~"name", _}]} =
+        jesse:validate_with_schema(Generated, #{}).
 
 is_api_path(<<"/api/", _/binary>>) -> true;
 is_api_path(_) -> false.
