@@ -243,7 +243,7 @@ post_page_escapes_and_formats(Config) ->
         ~"body" => ~"First paragraph.\n\nSecond & last.",
         ~"status" => ~"published"
     }),
-    {200, _, Body, _} = blog_web:get(#{}, "/posts/" ++ integer_to_list(Id)),
+    {ok, #{status := 200, body := Body}} = nova_test:get("/posts/" ++ integer_to_list(Id), Config),
     ?assertEqual(nomatch, binary:match(Body, ~"<script>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<p>First paragraph.</p>")),
@@ -370,15 +370,21 @@ remove(Req, Post) ->
 `update_post/2` reads `lock_version` from the params, which is how the hidden field reaches the optimistic lock. A form sent back with errors shows the messages under each field:
 
 ```erlang
-invalid_post_rerenders_form_with_errors(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Form, _} = blog_web:get(Jar, "/posts/new"),
-    {422, _, Body, _} = blog_web:post_form(Jar, "/posts", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"title", "Hi"},
-        {"body", ""},
-        {"status", "published"}
-    ]),
+invalid_post_rerenders_form_with_errors(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Form} = nova_test:get("/posts/new", Session),
+    {ok, #{status := 422, body := Body}} = nova_test:post(
+        "/posts",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"title", ~"Hi"},
+                {~"body", ~""},
+                {~"status", ~"published"}
+            ]
+        },
+        Session
+    ),
     ?assertNotEqual(nomatch, binary:match(Body, ~"value=\"Hi\"")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"should be at least 3 character(s)")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"can&#039;t be blank")),
@@ -441,11 +447,12 @@ Do not link stylesheets, fonts or scripts from a CDN. Every visitor's browser wo
 The test makes sure the stylesheet is served and no page links outside the site:
 
 ```erlang
-stylesheet_is_self_hosted(_Config) ->
-    {200, Headers, Css, _} = blog_web:get(#{}, "/assets/css/blog.css"),
-    "text/css" = blog_web:header("content-type", Headers),
-    ?assertNotEqual(nomatch, binary:match(Css, ~".post-card")),
-    {200, _, Page, _} = blog_web:get(#{}, "/posts"),
+stylesheet_is_self_hosted(Config) ->
+    {ok, Css} = nova_test:get("/assets/css/blog.css", Config),
+    ?assertStatus(200, Css),
+    ?assertHeader("content-type", "text/css", Css),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Css), ~".post-card")),
+    {ok, #{status := 200, body := Page}} = nova_test:get("/posts", Config),
     ?assertEqual(nomatch, binary:match(Page, [~"https://", ~"http://"])).
 ```
 

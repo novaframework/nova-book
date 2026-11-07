@@ -630,35 +630,48 @@ To log in with Google, GitHub or any OpenID Connect provider, add [nova_auth_oid
 
 ## Testing
 
-`test/blog_web.erl` is a small HTTP client for the suites: it keeps cookies in a map, extracts CSRF tokens from forms and logs in. A login test reads like the browser session it replaces:
+The suites drive the HTML pages with `nova_test`. A session from `nova_test:session/1` keeps cookies between requests like a browser, `#{form => Fields}` posts a URL-encoded form, and `nova_test:csrf_token/1` reads the token out of a form. A login test reads like the browser session it replaces:
 
 ```erlang
-login_sets_session_and_redirects(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/login"),
-    AnonymousId = maps:get("session_id", Jar),
-    {302, Headers, _, Jar1} = blog_web:post_form(Jar, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", ?PASSWORD}
-    ]),
-    "/posts" = blog_web:header("location", Headers),
-    ?assertNotEqual(AnonymousId, maps:get("session_id", Jar1)),
-    {200, _, Page, _} = blog_web:get(Jar1, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(Page, ~"Welcome back!")),
-    ?assertNotEqual(nomatch, binary:match(Page, ~"<span class=\"who\">alice</span>")),
-    {200, _, _, _} = blog_web:get(Jar1, "/posts/new"),
-    {302, _, _, _} = blog_web:get(Jar, "/posts/new"),
-    Req = #{nova_session_id => list_to_binary(maps:get("session_id", Jar1))},
+login_sets_session_and_redirects(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    AnonymousId = nova_test:cookie(~"session_id", Session),
+    {ok, Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Resp),
+    ?assertHeader("location", "/posts", Resp),
+    SessionId = nova_test:cookie(~"session_id", Session),
+    ?assertNotEqual(AnonymousId, SessionId),
+    {ok, Page} = nova_test:get("/posts", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Page), ~"Welcome back!")),
+    ?assertNotEqual(
+        nomatch, binary:match(nova_test:body(Page), ~"<span class=\"who\">alice</span>")
+    ),
+    {ok, NewPost} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, NewPost),
+    Anonymous = nova_test:set_cookie(~"session_id", AnonymousId, Config),
+    {ok, Refused} = nova_test:get("/posts/new", Anonymous),
+    ?assertStatus(302, Refused),
     {ok, #{id := _, provider := password, username := ~"alice", role := author}} =
-        nova_auth_actor:fetch(Req).
+        nova_auth_actor:fetch(#{nova_session_id => SessionId}).
 ```
 
-The last two lines check that login caches the actor, with its `id`, in the session. The rate-limit tests call `blog_web:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_web:api_token/2` gets a token through `POST /api/tokens`, as a client would, and `blog_data_fixtures:request_as/3,4` sends it (`blog_data_fixtures:token/1` issues one directly, for tests that are not about logging in):
+Login replaces the anonymous session ID, and the old one no longer opens `/posts/new`: `nova_test:set_cookie/3` on the suite's Config builds a second client that still sends it. The last two lines check that login caches the actor, with its `id`, in the session. The rate-limit tests call `blog_data_fixtures:reset_rate_limit/0` in `init_per_testcase/2`, since every test request comes from 127.0.0.1. For API tests, `blog_data_fixtures:api_token/3` gets a token through `POST /api/tokens`, as a client would, and `blog_data_fixtures:request_as/3,4` sends it (`blog_data_fixtures:token/1` issues one directly, for tests that are not about logging in):
 
 ```erlang
 post_author_comes_from_token(Config) ->
     #{id := AliceId} = ?config(alice, Config),
-    Token = blog_web:api_token("alice@example.com", "correct horse battery"),
+    Token = blog_data_fixtures:api_token(Config, ~"alice@example.com", ~"correct horse battery"),
     {201, #{~"user_id" := AliceId}} = blog_data_fixtures:request_as(Token, post, "/api/posts", #{
         title => ~"Mine", body => ~"Written by Alice", user_id => AliceId + 1000
     }).

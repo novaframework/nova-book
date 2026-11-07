@@ -659,15 +659,22 @@ All 3 tests passed.
 The account emails are tested end to end in `test/blog_email_accounts_SUITE.erl`: the suite registers through the form, drains the queue, pulls the link out of the email and follows it like a browser. The link is pulled out with a regular expression and the token read back with `uri_string`, so a token that was not encoded would fail here:
 
 ```erlang
-registration_mails_a_confirmation_link(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/register"),
-    {302, _, _, Jar1} = blog_web:post_form(Jar, "/register", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "carol@example.com"},
-        {"username", "carol"},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ?PASSWORD}
-    ]),
+registration_mails_a_confirmation_link(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/register", Session),
+    {ok, #{status := 302}} = nova_test:post(
+        "/register",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"carol@example.com"},
+                {~"username", ~"carol"},
+                {~"password", ?PASSWORD},
+                {~"password_confirmation", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
     {ok, #{id := CarolId, confirmed_at := undefined}} =
         blog_repo:get_by(blog_user, [{email, ~"carol@example.com"}]),
     shigoto_testing:assert_enqueued(#{
@@ -681,17 +688,19 @@ registration_mails_a_confirmation_link(_Config) ->
         text_body = Text
     } = blog_jobs_fixtures:receive_email(),
     "/confirm?" ++ _ = Link = link_in(Text),
-    {200, Headers, Page, Jar2} = blog_web:get(Jar1, Link),
-    "no-referrer" = blog_web:header("referrer-policy", Headers),
-    Fields = [{"_csrf_token", blog_web:csrf_token(Page)}, {"token", token_in(Link)}],
-    {302, _, _, Jar3} = blog_web:post_form(Jar2, "/confirm", Fields),
+    {ok, Page} = nova_test:get(Link, Session),
+    ?assertHeader("referrer-policy", "no-referrer", Page),
+    Confirm = #{form => [{~"_csrf_token", nova_test:csrf_token(Page)}, {~"token", token_in(Link)}]},
+    {ok, #{status := 302}} = nova_test:post("/confirm", Confirm, Session),
     {ok, #{confirmed_at := {{_, _, _}, {_, _, _}}}} = blog_repo:get(blog_user, CarolId),
-    {302, _, _, Jar4} = blog_web:post_form(Jar3, "/confirm", Fields),
-    {200, _, Posts, _} = blog_web:get(Jar4, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(Posts, ~"That link is invalid or has expired.")).
+    {ok, #{status := 302}} = nova_test:post("/confirm", Confirm, Session),
+    {ok, Posts} = nova_test:get("/posts", Session),
+    ?assertNotEqual(
+        nomatch, binary:match(nova_test:body(Posts), ~"That link is invalid or has expired.")
+    ).
 ```
 
-`assert_enqueued/1` with the exact `args` map also proves the job holds no token. The other tests cover the reset flow (a rejected password, a used link, the old API token revoked), the same answer for an unknown address, the five-minute limit, and a deterministic check that `ab+c/d=` is encoded as `ab%2Bc%2Fd%3D`. `POST /register` and `POST /password/forgot` share the login rate limiter, so `init_per_testcase/2` calls `blog_web:reset_rate_limit/0`.
+`assert_enqueued/1` with the exact `args` map also proves the job holds no token. The other tests cover the reset flow (a rejected password, a used link, the old API token revoked), the same answer for an unknown address, the five-minute limit, and a deterministic check that `ab+c/d=` is encoded as `ab%2Bc%2Fd%3D`. `POST /register` and `POST /password/forgot` share the login rate limiter, so `init_per_testcase/2` calls `blog_data_fixtures:reset_rate_limit/0`.
 
 ```
 %%% blog_email_accounts_SUITE: ......

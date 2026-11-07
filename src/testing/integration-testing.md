@@ -57,18 +57,20 @@ Each suite starts the application in `init_per_suite/1`. The shared helper is `t
 
 ```erlang
 start() ->
+    start([]).
+
+start(Config) ->
     ok = application:set_env(nova_auth, pbkdf2_iterations, 1000),
-    {ok, _} = application:ensure_all_started(blog),
-    [#{app := blog}] = nova_sup:get_started_applications(),
-    {ok, _} = application:ensure_all_started(inets),
-    kura_sandbox:start().
+    Config1 = nova_test:start(blog, Config),
+    kura_sandbox:start(),
+    Config1.
 ```
 
-Fewer PBKDF2 iterations make creating users fast; never do that outside tests. `inets` is OTP's HTTP client, `httpc`.
+Fewer PBKDF2 iterations make creating users fast; never do that outside tests. `nova_test:start/2` (from the `nova_test` test dependency) starts the blog and its dependencies, `inets` (OTP's HTTP client, `httpc`) included, and returns the CT config with the port of the running listener added. Suites that send requests with `nova_test` keep that config (`init_per_suite(Config) -> blog_data_fixtures:start(Config).`); the others call `start/0`.
 
-The third line is there because of a real afternoon lost while writing this chapter. When the HTTP port is already taken, Nova logs `"Cowboy could not start"` with `eaddrinuse` and **the application still starts**. `ensure_all_started/1` returns `{ok, _}`, and every request then goes to whatever else owns the port: a forgotten dev node, another project, another test run. The symptoms are 404s for routes that exist or `{error, socket_closed_remotely}`. `nova_sup:get_started_applications/0` only lists an application whose listener is bound, so the match fails in `init_per_suite` with a clear `{badmatch, []}` instead.
+`nova_test:start/2` also checks that the listener is running, and that check matters more than it looks. It cost an afternoon while writing this chapter. When the HTTP port is already taken, Nova logs `"Cowboy could not start"` with `eaddrinuse` and **the application still starts**. `application:ensure_all_started/1` returns `{ok, _}`, and every request then goes to whatever else owns the port: a forgotten dev node, another project, another test run. The symptoms are 404s for routes that exist or `{error, socket_closed_remotely}`. `nova_test:start/2` looks the listener up instead, and when it is missing it stops what it started and raises `{nova_test_listener_not_running, #{app => blog, configured_port => 8081, ...}}` in `init_per_suite`.
 
-Suites stop the application in `end_per_suite/1` with `application:stop(blog)`, so the next suite boots it fresh.
+Most suites stop the application in `end_per_suite/1` with `application:stop(blog)`, so the next suite boots it fresh. `nova_test:stop/1` is more careful: it stops exactly the applications its own `start/2` started, in reverse order. When an earlier suite left the blog running, `start/2` started nothing, and `stop/1` leaves the blog running too.
 
 ## One transaction per test: `kura_sandbox`
 
@@ -128,7 +130,7 @@ token(User) ->
 
 ## JSON APIs with `nova_test`
 
-`nova_test` has an HTTP client on top of `httpc` that reads the port from `cowboy_configuration`. `nova_test:start(App, Config)` starts the app and puts the port in the CT config, and its assertion macros work on the response. `test/blog_nova_test_SUITE.erl` uses it for the posts API from [CRUD](../data-layer/crud.md) and [API tokens](../auth-sessions/authentication.md#api-tokens):
+`nova_test` is an HTTP client on top of `httpc`. The config from `nova_test:start/2` holds the listener's port, so requests made with it reach the blog under test, and the assertion macros work on the response. `test/blog_nova_test_SUITE.erl` uses it for the posts API from [CRUD](../data-layer/crud.md) and [API tokens](../auth-sessions/authentication.md#api-tokens):
 
 ```erlang
 -module(blog_nova_test_SUITE).
@@ -136,8 +138,7 @@ token(User) ->
 -include_lib("nova_test/include/nova_test.hrl").
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    nova_test:start(blog, Config).
+    blog_data_fixtures:start(Config).
 
 end_per_suite(Config) ->
     nova_test:stop(Config).
@@ -162,7 +163,7 @@ creating_a_post_needs_a_token(Config) ->
     ?assertJson(#{~"title" := ~"Via nova_test", ~"status" := ~"draft"}, Created).
 ```
 
-`nova_test:start/2` is called after `blog_data_fixtures:start/0` here, because the fixture adds the listener check and the sandbox; on its own it would also start the app. `nova_test:json/1` and `?assertJson` decode with the app's `json_lib`, so the keys are binaries, as a client sees them. The request options are `json` (encoded and sent as `application/json`), `body` with `content_type`, and `headers` as binary pairs. Response headers are strings, as `httpc` returns them.
+`nova_test:json/1` and `?assertJson` decode with the app's `json_lib` (`blog_json`), so the keys are binaries, as a client sees them. The request options are `json` (encoded and sent as `application/json`), `form` (fields sent URL-encoded), `body` with `content_type`, and `headers` as binary pairs. Response headers are strings, as `httpc` returns them. The path must start with `/`: anything else raises `nova_test_invalid_path`, since it would change the host the request goes to.
 
 | Function or macro | Purpose |
 |---|---|
@@ -173,6 +174,8 @@ creating_a_post_needs_a_token(Config) ->
 | `?assertJson(Pattern, Resp)` | pattern-match the decoded body |
 | `?assertBody(Binary, Resp)` | exact body |
 | `?assertHeader(Name, Value, Resp)` | one header, case-insensitive name |
+
+Each macro has a generator version for EUnit, `?_assertStatus` and so on.
 
 The Part II suites use two small helpers of their own in `blog_data_fixtures` that return `{Status, DecodedBody}`, which reads well in a match:
 
@@ -196,54 +199,76 @@ Both styles are plain `httpc` underneath. Use whichever reads better.
 
 ## HTML forms: cookies and CSRF
 
-The HTML side needs what `nova_test` does not do: keep cookies between requests and send the CSRF token from the form. `test/blog_web.erl` is a few functions for that. Every call takes a cookie jar (a map) and returns the updated one:
+The HTML side needs two more things: keep cookies between requests, and send the CSRF token from the form. `nova_test` does both:
+
+| Function or macro | Purpose |
+|---|---|
+| `nova_test:session(Config)` | a Config with a new cookie jar: requests send its cookies and store the ones the response sets |
+| `nova_test:csrf_token(Resp)` | the `value` of the form's `_csrf_token` input, or `undefined` |
+| `nova_test:cookie(Name, Config)` | one cookie from the jar |
+| `nova_test:set_cookie(Name, Value, Config)` | add a cookie; on a Config without a jar it is sent with every request and no response changes it |
+| `nova_test:set_cookies(Resp)` | every `Set-Cookie` of a response, with its attributes |
+| `?assertCookie(Name, Value, Config)` | one cookie in the jar |
+
+The jar is an ETS table owned by the process that calls `session/1`. Create it in the test case, not in `init_per_suite/1`, whose process exits before the cases run. One jar is one browser: two sessions in one test are two users, or one user on two devices (`password_change_ends_other_sessions` logs in on a laptop and a phone). The jar ignores `Secure`, `HttpOnly` and `SameSite`, since every request goes to the app under test. `set_cookies/1` is how a test checks them:
 
 ```erlang
-request(Method, Jar, Path, Headers, Body) ->
-    AllHeaders = cookie_header(Jar) ++ Headers,
-    Request =
-        case Body of
-            none -> {blog_data_fixtures:url(Path), AllHeaders};
-            {ContentType, Data} -> {blog_data_fixtures:url(Path), AllHeaders, ContentType, Data}
-        end,
-    {ok, {{_, Status, _}, RespHeaders, RespBody}} =
-        httpc:request(Method, Request, [{autoredirect, false}], [{body_format, binary}]),
-    {Status, RespHeaders, RespBody, update_jar(Jar, RespHeaders)}.
-
-csrf_token(Html) ->
-    {match, [Token]} = re:run(
-        Html, ~"name=\"_csrf_token\" value=\"([^\"]+)\"", [{capture, all_but_first, binary}]
+first_visit_gets_hardened_cookie(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Resp} = nova_test:get("/posts", Session),
+    ?assertStatus(200, Resp),
+    [#{value := Id, attributes := Attributes}] =
+        [Cookie || #{name := ~"session_id"} = Cookie <- nova_test:set_cookies(Resp)],
+    ?assertCookie(~"session_id", Id, Session),
+    ?assertEqual(
+        [{~"httponly", ~""}, {~"path", ~"/"}, {~"samesite", ~"Lax"}, {~"secure", ~""}],
+        lists:sort(Attributes)
     ),
-    Token.
+    ?assertEqual(43, byte_size(Id)).
 ```
 
-`{autoredirect, false}` matters: a login answers `302`, and the test wants to see that redirect and the cookie set with it, not the page after it. Logging in is then a GET for the form, and a POST with the token from it:
+Requests never follow redirects: a login answers `302`, and the test wants to see that redirect and the cookie set with it, not the page after it. Logging in is then a GET for the form, and a POST with the token from it. `blog_data_fixtures` has it as a helper:
 
 ```erlang
-log_in(Email, Password) ->
-    {200, _, Form, Jar} = get(#{}, "/login"),
-    {302, Headers, _, Jar1} = post_form(Jar, "/login", [
-        {"_csrf_token", csrf_token(Form)}, {"email", Email}, {"password", Password}
-    ]),
-    "/posts" = header("location", Headers),
-    Jar1.
+log_in(Config, Email, Password) ->
+    Session = nova_test:session(Config),
+    {ok, #{status := 200} = Form} = nova_test:get("/login", Session),
+    {ok, #{status := 302} = Resp} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", Email},
+                {~"password", Password}
+            ]
+        },
+        Session
+    ),
+    "/posts" = nova_test:header("location", Resp),
+    Session.
 ```
 
 With it, tests read like the steps a person takes. From `blog_auth_login_SUITE`:
 
 ```erlang
-login_without_csrf_token_is_403(_Config) ->
-    {200, _, _, Jar} = blog_web:get(#{}, "/login"),
-    {403, _, ~"Forbidden - CSRF token invalid", _} =
-        blog_web:post_form(Jar, "/login", [{"email", "alice@example.com"}, {"password", ?PASSWORD}]).
+login_without_csrf_token_is_403(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/login", Session),
+    ?assert(is_binary(nova_test:csrf_token(Form))),
+    Login = #{form => [{~"email", ~"alice@example.com"}, {~"password", ?PASSWORD}]},
+    {ok, Resp} = nova_test:post("/login", Login, Session),
+    ?assertStatus(403, Resp),
+    ?assertBody(~"Forbidden - CSRF token invalid", Resp).
 
-logout_requires_csrf_token(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {403, _, _, _} = blog_web:post_form(Jar, "/logout", []),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new").
+logout_requires_csrf_token(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Logout} = nova_test:post("/logout", #{form => []}, Session),
+    ?assertStatus(403, Logout),
+    {ok, Page} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, Page).
 ```
 
-The negative tests are the important ones: the form without a token is refused, and the session survives a forged logout.
+The negative tests are the important ones: the form without a token is refused, and the session survives a forged logout. The first one also checks that the session holds a token before it posts without one. `nova_csrf_plugin` answers 403 when there is no session at all, so without that check the test could pass for the wrong reason.
 
 ### Shared state: the rate limiter
 
@@ -252,7 +277,7 @@ The login limiter from [Authentication](../auth-sessions/authentication.md) coun
 ```erlang
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 ```
 
