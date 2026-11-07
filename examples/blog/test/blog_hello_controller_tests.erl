@@ -23,23 +23,29 @@ create_from_json_test() ->
     {json, 201, Headers, _} = blog_hello_controller:create(Req),
     ?assertEqual(#{~"location" => ~"/hello/Ada"}, Headers).
 
+create_from_form_test() ->
+    Req = nova_test_req:with_form(#{~"name" => ~"Ada"}, nova_test_req:new(post, "/hello")),
+    ?assertJsonResponse(201, #{name := ~"Ada"}, blog_hello_controller:create(Req)).
+
 create_without_a_name_test() ->
     Req = nova_test_req:with_json(#{}, nova_test_req:new(post, "/hello")),
     ?assertEqual({error, missing_name}, blog_hello_controller:create(Req)).
 
-fallback_turns_errors_into_responses_test() ->
+fallback_turns_errors_into_responses_test_() ->
     Req = nova_test_req:new(get, "/hello/x"),
-    ?assertJsonResponse(
-        422,
-        #{error := ~"invalid_name"},
-        blog_fallback_controller:resolve(Req, {error, invalid_name})
-    ),
-    ?assertJsonResponse(
-        400,
-        #{error := ~"missing_name"},
-        blog_fallback_controller:resolve(Req, {error, missing_name})
-    ).
+    [
+        ?_assertJsonResponse(
+            422,
+            #{error := ~"invalid_name"},
+            blog_fallback_controller:resolve(Req, {error, invalid_name})
+        ),
+        ?_assertJsonResponse(
+            400,
+            #{error := ~"missing_name"},
+            blog_fallback_controller:resolve(Req, {error, missing_name})
+        )
+    ].
 
 greet_req(Name, Query) ->
     Req = nova_test_req:new(get, <<"/hello/", Name/binary>>),
-    (nova_test_req:with_bindings(#{~"name" => Name}, Req))#{parsed_qs => Query}.
+    nova_test_req:with_query(Query, nova_test_req:with_bindings(#{~"name" => Name}, Req)).

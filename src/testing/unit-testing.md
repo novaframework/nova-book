@@ -13,7 +13,7 @@ EUnit tests are modules named `<module>_tests` in `test/`. rebar3 finds them by 
     {erl_opts, [nowarn_export_all, warnings_as_errors, {i, "test/util"}]},
     {deps, [
         {meck, "1.2.0"},
-        {nova_test, "~> 0.2"},
+        {nova_test, "~> 0.3"},
         {gun, "2.5.0"}
     ]},
     {ct_opts, [{sys_config, "./config/test_sys.config"}]},
@@ -356,20 +356,23 @@ A mock is a copy of your assumptions about the real module. If `blog_repo:update
 
 ## Controllers without HTTP: `nova_test_req`
 
-A Nova controller is a function from a request map to a return tuple, so it can be called directly. `nova_test` builds the request map. From `nova_test_req` (0.2.0):
+A Nova controller is a function from a request map to a return tuple, so it can be called directly. `nova_test` builds the request map. From `nova_test_req` (0.3.0):
 
 | Function | What it sets |
 |---|---|
 | `nova_test_req:new(Method, Path)` | `method`, `path`, `host`, `port`, `scheme`, empty `headers`, `bindings` and `qs`, a local `peer` |
 | `nova_test_req:with_bindings(Bindings, Req)` | `bindings` (path parameters, binary keys) |
-| `nova_test_req:with_json(Json, Req)` | `json` (what `nova_request_plugin` would decode), an encoded `body`, the `content-type` header |
+| `nova_test_req:with_json(Json, Req)` | an encoded `body`, `json` (that body decoded again, so keys are binaries), the `content-type` header |
 | `nova_test_req:with_header(Name, Value, Req)` | one request header (lowercase binary name) |
-| `nova_test_req:with_query(Params, Req)` | the raw `qs` string |
-| `nova_test_req:with_body(Body, Req)` | the raw `body` |
+| `nova_test_req:with_query(Params, Req)` | `qs` (URL-encoded) and `parsed_qs` |
+| `nova_test_req:with_form(Fields, Req)` | a form `body`, `params`, the `content-type` header |
+| `nova_test_req:with_body(Body, Req)` | the raw `body`, not parsed |
 | `nova_test_req:with_auth_data(Data, Req)` | `auth_data`, as a security function would |
 | `nova_test_req:with_peer(Peer, Req)` | the client address |
 
-The request map is what a controller sees *after* the plugins ran, minus whatever the plugins add. `with_query/2` only sets `qs`, but controllers read `parsed_qs`, which `nova_request_plugin` fills in. Set it yourself when a controller reads the query string. Likewise form fields (`params`) are not parsed from `with_body/2`.
+The request map is what a controller sees *after* the plugins ran. `with_query/2` and `with_form/2` fill in `parsed_qs` and `params` the way `nova_request_plugin` does with `parse_qs => true` and `read_urlencoded_body => true`: a map with binary keys and values. Fields are a map or a list of pairs. A value of `undefined` raises `nova_test_undefined_form_value` instead of sending the string `"undefined"`.
+
+`with_json/2` encodes with the `json_lib` Nova would use. In EUnit no application environment is loaded, so that is `thoas`, Nova's default and one of Nova's own dependencies. The blog's `{json_lib, blog_json}` in `config/test_sys.config` only applies under Common Test. Either way the controller sees the same decoded map.
 
 `nova_test/include/nova_test.hrl` includes `eunit.hrl` and adds macros that match controller return values:
 
@@ -381,7 +384,7 @@ The request map is what a controller sees *after* the plugins ran, minus whateve
 | `?assertRedirect(Target, Result)` | `{redirect, Target}` |
 | `?assertOkResponse(Pattern, Result)` | `{ok, Pattern}` (template variables) |
 
-There are no `?_assert...` generator versions of these. `test/blog_hello_controller_tests.erl` tests the controller from [Controllers & Responses](../foundations/controllers.md):
+Each macro, and each HTTP macro in the [next chapter](integration-testing.md#json-apis-with-nova_test), also has a generator version, `?_assertJsonResponse` and so on. `test/blog_hello_controller_tests.erl` tests the controller from [Controllers & Responses](../foundations/controllers.md):
 
 ```erlang
 -module(blog_hello_controller_tests).
@@ -405,26 +408,32 @@ create_from_json_test() ->
     {json, 201, Headers, _} = blog_hello_controller:create(Req),
     ?assertEqual(#{~"location" => ~"/hello/Ada"}, Headers).
 
+create_from_form_test() ->
+    Req = nova_test_req:with_form(#{~"name" => ~"Ada"}, nova_test_req:new(post, "/hello")),
+    ?assertJsonResponse(201, #{name := ~"Ada"}, blog_hello_controller:create(Req)).
+
 greet_req(Name, Query) ->
     Req = nova_test_req:new(get, <<"/hello/", Name/binary>>),
-    (nova_test_req:with_bindings(#{~"name" => Name}, Req))#{parsed_qs => Query}.
+    nova_test_req:with_query(Query, nova_test_req:with_bindings(#{~"name" => Name}, Req)).
 ```
 
-The response map keys are atoms (`greeting`), because the test sees the term before it is encoded to JSON. An invalid name returns `{error, invalid_name}`, which Nova hands to the controller's fallback. The fallback is a module too, so test it the same way:
+The response map keys are atoms (`greeting`), because the test sees the term before it is encoded to JSON. An invalid name returns `{error, invalid_name}`, which Nova hands to the controller's fallback. The fallback is a module too, so test it the same way. With the generator versions each error is reported as its own test:
 
 ```erlang
-fallback_turns_errors_into_responses_test() ->
+fallback_turns_errors_into_responses_test_() ->
     Req = nova_test_req:new(get, "/hello/x"),
-    ?assertJsonResponse(
-        422,
-        #{error := ~"invalid_name"},
-        blog_fallback_controller:resolve(Req, {error, invalid_name})
-    ),
-    ?assertJsonResponse(
-        400,
-        #{error := ~"missing_name"},
-        blog_fallback_controller:resolve(Req, {error, missing_name})
-    ).
+    [
+        ?_assertJsonResponse(
+            422,
+            #{error := ~"invalid_name"},
+            blog_fallback_controller:resolve(Req, {error, invalid_name})
+        ),
+        ?_assertJsonResponse(
+            400,
+            #{error := ~"missing_name"},
+            blog_fallback_controller:resolve(Req, {error, missing_name})
+        )
+    ].
 ```
 
 ### Security functions
