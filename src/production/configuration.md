@@ -30,7 +30,7 @@ The `.src` suffix matters only to relx. The dev file has no variables in it, so 
 The dev config is the one you have been editing since Part I. Trimmed to the parts this chapter talks about:
 
 ```erlang
-{blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}, {metrics_port, 9464}, {cors_origins, [~"http://localhost:5173"]}]},
+{blog, [{json_lib, blog_json}, {ops_token, ~"dev-ops-token"}, {metrics, #{port => 9464}}, {cors_origins, [~"http://localhost:5173"]}]},
 {nova, [
     {use_stacktrace, true},
     {environment, dev},
@@ -57,7 +57,7 @@ The dev config is the one you have been editing since Part I. Trimmed to the par
 ]}
 ```
 
-`test_sys.config` has the same shape with `blog_test`, `logger_level` at `warning`, `{metrics_port, 0}` (any free port, so suites never collide) and a span processor that hands spans straight to the test process (see [Observability](opentelemetry.md)). The dev and test keys are committed on purpose: they protect nothing but local databases.
+`test_sys.config` has the same shape with `blog_test`, `logger_level` at `warning`, `{metrics, #{port => 0}}` (any free port, so suites never collide) and a span processor that hands spans straight to the test process (see [Observability](opentelemetry.md)). The dev and test keys are committed on purpose: they protect nothing but local databases.
 
 ## Production: secrets from the environment
 
@@ -67,7 +67,7 @@ The production file has no secrets in it. Every value that differs between deplo
 {blog, [
     {json_lib, blog_json},
     {ops_token, ~"${BLOG_OPS_TOKEN}"},
-    {metrics_port, ${METRICS_PORT:-9464}},
+    {metrics, #{port => ${METRICS_PORT:-9464}, ip => {0, 0, 0, 0}}},
     {cors_origins, []},
     {base_url, ~"${BLOG_BASE_URL}"},
     {mailer, #{
@@ -210,7 +210,7 @@ prod_numbers_have_defaults(_Config) ->
     File = prod(),
     #{port := 5432} = repo(File),
     #{port := 8080} = env(File, nova, cowboy_configuration),
-    9464 = env(File, blog, metrics_port).
+    #{port := 9464, ip := {0, 0, 0, 0}} = env(File, blog, metrics).
 
 prod_is_hardened(_Config) ->
     File = prod(),
@@ -221,10 +221,11 @@ prod_is_hardened(_Config) ->
         H
      || H <- Handlers, lists:member(H, [nova_stream_h, blog_session_h])
     ],
-    [] = [Route || {mcp, _, _, _} = Route <- env(File, arizona_nova, routes)].
+    [] = [Route || {mcp, _, _, _} = Route <- env(File, arizona_nova, routes)],
+    false = env(File, opentelemetry_nova, trust_incoming_context).
 ```
 
-Others check that every file parses and declares `blog_repo` with an integer port, that the production Arizona routes are the tested ones minus the dev-only MCP endpoint, that `prod_vm.args.src` takes the cookie from `${RELEASE_COOKIE}`, and that `${PORT}` without a default is indeed rejected. `prod_is_hardened` is the one that matters most: it fails if someone turns stack traces back on or moves `blog_session_h` (the session cookie hardening from [Sessions](../auth-sessions/sessions.md)) in front of `nova_stream_h`.
+Others check that every file parses and declares `blog_repo` with an integer port, that every file puts the OpenTelemetry stream handler and plugin first ([Observability](opentelemetry.md#the-handler-lists)), that the production Arizona routes are the tested ones minus the dev-only MCP endpoint, that `prod_vm.args.src` takes the cookie from `${RELEASE_COOKIE}`, and that `${PORT}` without a default is indeed rejected. `prod_is_hardened` is the one that matters most: it fails if someone turns stack traces back on, moves `blog_session_h` (the session cookie hardening from [Sessions](../auth-sessions/sessions.md)) in front of `nova_stream_h`, or lets clients choose the trace their requests join ([Observability](opentelemetry.md#whose-trace-context-to-trust)).
 
 ```shell
 rebar3 ct --suite=test/blog_prod_config_SUITE

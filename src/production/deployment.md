@@ -292,7 +292,7 @@ The image is 238 MB, against 456 MB for the builder. The "git repo failed" line 
 Run it with an env file (the same variables as before, with `DB_HOST` pointing at the database as seen from the container):
 
 ```shell
-docker run -d --name blog --env-file blog.env -p 8080:8080 -p 9464:9464 \
+docker run -d --name blog --env-file blog.env -p 8080:8080 -p 127.0.0.1:9464:9464 \
     --add-host=host.docker.internal:host-gateway nova-book-blog:prod
 docker logs blog
 ```
@@ -316,6 +316,8 @@ docker exec blog /app/bin/blog ping
 uid=999(blog) gid=999(blog) groups=999(blog)
 pong
 ```
+
+The metrics port is published on the host's loopback only. Inside the container the listener binds all interfaces (`ip => {0, 0, 0, 0}` in `prod_sys.config.src`), because opentelemetry_nova's default, `127.0.0.1`, is the container's own loopback and Docker's port forwarding could not reach it. `/metrics` has no authentication, so a plain `-p 9464:9464` would serve it on every interface of the host; point Prometheus at the host's loopback, or run it on the same Docker network and scrape `blog:9464` without publishing the port at all ([Observability](opentelemetry.md#metrics-for-prometheus)).
 
 `bin/blog ping` works inside the container because the cookie is in the container's environment and distribution is bound to its loopback interface; nothing outside the container can reach it.
 

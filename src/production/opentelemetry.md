@@ -7,7 +7,7 @@ When the blog is slow or failing in production you want three things: a trace of
 ```erlang
 {deps, [
     ...
-    {opentelemetry_nova, "~> 0.2"},
+    {opentelemetry_nova, "~> 0.5"},
     {opentelemetry_kura, "~> 0.2"},
     {opentelemetry, "~> 1.7"},
     {opentelemetry_exporter, "~> 1.11"},
@@ -15,7 +15,13 @@ When the blog is slow or failing in production you want three things: a trace of
 ]}.
 ```
 
-The lock file resolves them to opentelemetry_nova 0.2.2, opentelemetry_kura 0.2.2, the SDK `opentelemetry` 1.7.0, `opentelemetry_experimental` 0.6.0 (the metrics SDK, pulled in by opentelemetry_nova) and `opentelemetry_exporter` 1.11.0. The exporter is the OTLP client: `{traces_exporter, otlp}` (and the SDK's default exporter) is that module, and opentelemetry_nova does not depend on it.
+The lock file resolves them to opentelemetry_nova 0.5.0, opentelemetry_kura 0.2.2, the SDK `opentelemetry` 1.7.0, `opentelemetry_experimental` 0.6.0 (the metrics SDK, pulled in by opentelemetry_nova) and `opentelemetry_exporter` 1.11.0. The exporter is the OTLP client: `{traces_exporter, otlp}` (and the SDK's default exporter) is that module, and opentelemetry_nova does not depend on it.
+
+opentelemetry_nova's own `rebar.config` has a shell `pre_hooks` entry meant for building the library on its own. It fails when the library is compiled as a dependency, so the blog's `rebar.config` empties it:
+
+```erlang
+{overrides, [{override, opentelemetry_nova, [{pre_hooks, []}]}]}.
+```
 
 All five go into `blog.app.src` **before** `nova` and `kura`, so the SDK is running before the first request or query is instrumented:
 
@@ -45,88 +51,20 @@ ok = opentelemetry_kura:setup(),
 
 ## Traces: one span per request
 
-opentelemetry_nova's tracing lives in a Cowboy stream handler, `otel_nova_stream_h`. It reads an incoming W3C `traceparent` header, starts a server span with the method, path, scheme, host, port, peer address and user agent, and ends it with the status code once the response is sent. It also records the metrics.
+opentelemetry_nova needs two pieces in the request path, and the reason is the way Cowboy and Nova split the work between processes.
 
-The package's README lists two components for this: the stream handler, which goes first in `stream_handlers`, and `otel_nova_plugin`, a pre-request plugin that renames the span to `GET blog_posts_controller:index` and adds `nova.app`, `nova.controller` and `nova.action`. Used that way, two things go wrong in 0.2.2:
-
-- **The plugin cannot see the span, and queries lose their parent.** Cowboy runs stream handlers in the *connection* process, but plugins, controllers and Kura run in a separate *request* process. The span context the stream handler attached lives in the connection process's dictionary, so in the request process there is no current span: the plugin's attribute calls are no-ops and every Kura query becomes a separate root trace.
-- **Static files return 500.** For `sendfile` responses (every file Nova serves from `priv/`), the stream handler calls `iolist_size/1` on the `{sendfile, ...}` tuple, crashes, and Cowboy answers 500. The crash report also dumps the stream handler state, request cookies included.
-
-The blog keeps the stream handler but wraps it, and replaces the plugin with a middleware.
-
-### `blog_otel_h`: a wrapping stream handler
-
-`blog_otel_h` is a stream handler that calls `otel_nova_stream_h` on the side and then passes everything to the rest of the chain. It fixes both problems at the one place they can be fixed: it copies the span context into the request map (which Cowboy hands to the request process), and it shows the OpenTelemetry handler a plain `headers` event instead of a `sendfile` body.
-
-```erlang
--module(blog_otel_h).
--behaviour(cowboy_stream).
-
--export([init/3, data/4, info/3, terminate/3, early_error/5]).
-
--record(state, {otel, next}).
-
-init(StreamID, Req, Opts) ->
-    {[], Otel} = otel_nova_stream_h:init(StreamID, Req, Opts#{stream_handlers => []}),
-    Req1 = Req#{otel_ctx => otel_ctx:get_current()},
-    {Commands, Next} = cowboy_stream:init(StreamID, Req1, Opts),
-    {Commands, #state{otel = Otel, next = Next}}.
-
-data(StreamID, IsFin, Data, #state{otel = Otel, next = Next} = State) ->
-    {[], Otel1} = otel_nova_stream_h:data(StreamID, IsFin, Data, Otel),
-    {Commands, Next1} = cowboy_stream:data(StreamID, IsFin, Data, Next),
-    {Commands, State#state{otel = Otel1, next = Next1}}.
-
-info(StreamID, Info, #state{otel = Otel, next = Next} = State) ->
-    {[], Otel1} = otel_nova_stream_h:info(StreamID, without_sendfile(Info), Otel),
-    {Commands, Next1} = cowboy_stream:info(StreamID, Info, Next),
-    {Commands, State#state{otel = Otel1, next = Next1}}.
-
-terminate(StreamID, Reason, #state{otel = Otel, next = Next}) ->
-    Result = cowboy_stream:terminate(StreamID, Reason, Next),
-    otel_nova_stream_h:terminate(StreamID, Reason, Otel),
-    Result.
-
-early_error(StreamID, Reason, PartialReq, Resp, Opts) ->
-    cowboy_stream:early_error(StreamID, Reason, PartialReq, Resp, Opts).
-
-without_sendfile({response, Status, Headers, {sendfile, _Offset, _Length, _Path}}) ->
-    {headers, Status, Headers};
-without_sendfile(Info) ->
-    Info.
-```
-
-Passing `stream_handlers => []` makes `otel_nova_stream_h` the last handler in its own little chain, so it returns `{[], State}` and never calls the next handler itself; `blog_otel_h` does that with the real `Opts`. The OpenTelemetry handler still sees every event, so the span and the metrics come out the same.
-
-### `blog_otel_middleware`: enriching the span
-
-In the request process the context arrives in the request map. A Cowboy middleware placed right after `nova_router` (which has just put the matched controller into `Env`) attaches it and then calls `otel_nova_plugin:pre_request/4` directly to rename the span:
-
-```erlang
--module(blog_otel_middleware).
--behaviour(cowboy_middleware).
-
--export([execute/2]).
-
-execute(#{otel_ctx := Ctx} = Req, Env) ->
-    _ = otel_ctx:attach(Ctx),
-    {ok, _Req, _State} = otel_nova_plugin:pre_request(Req, Env, #{}, undefined),
-    {ok, Req, Env};
-execute(Req, Env) ->
-    {ok, Req, Env}.
-```
-
-A middleware rather than a plugin, because global plugins only run for route groups that have no `plugins` of their own, and most of the blog's groups do. Every request passes through the middleware chain.
+- **`otel_nova_stream_h`**, a Cowboy stream handler. It reads an incoming W3C `traceparent` header, starts a server span with the method, path, scheme, host, port, peer address and user agent, and ends it with the status code once the response is sent. It also records the metrics. Cowboy runs stream handlers in the *connection* process.
+- **`otel_nova_plugin`**, a pre-request plugin. Plugins, security functions, controllers and Kura run in a separate *request* process, where there is no current span. The stream handler puts the span's context into the request map, and the plugin attaches it in the request process. From then on every span created there (a Kura query, a span of your own) is a child of the server span. The plugin also renames the span after the route template, adds `http.route`, `nova.app`, `nova.controller` and `nova.action`, and puts `trace_id` and `span_id` in the logger metadata.
 
 ### The handler lists
 
-In all three configs:
+In all three configs, the stream handler goes first in `stream_handlers` so that the span covers the whole request and sees the final status, and the plugin goes first in the global plugin list so that everything after it runs with the context attached:
 
 ```erlang
 {cowboy_configuration, #{
     port => 8080,
     stream_handlers => [
-        blog_otel_h,
+        otel_nova_stream_h,
         nova_stream_h,
         blog_session_h,
         cowboy_compress_h,
@@ -135,16 +73,77 @@ In all three configs:
     middleware_handlers => [
         arizona_cowboy_middleware,
         nova_router,
-        blog_otel_middleware,
         nova_plugin_handler,
         nova_security_handler,
         nova_handler,
         nova_plugin_handler
     ]
 }},
+{bootstrap_application, blog},
+{plugins, [
+    {pre_request, otel_nova_plugin, #{}},
+    {pre_request, blog_request_logger, #{}},
+    {pre_request, nova_request_plugin, #{decode_json_body => true,
+                                         read_urlencoded_body => true}},
+    {post_request, blog_request_logger, #{}}
+]}
 ```
 
-`blog_otel_h` comes first so that the span covers the whole request and sees the final status. Arizona's live routes are handled by `arizona_cowboy_middleware` before `nova_router`, so they get the server span from the stream handler but not the controller name.
+A plugin listed before `otel_nova_plugin` runs without a trace context, so its log lines carry no trace id. `blog_prod_config_SUITE:every_config_wires_tracing` checks the order in every config file.
+
+### Route groups with their own plugins
+
+The global list only applies to route groups without a `plugins` key ([Custom Plugins & CORS](plugins-cors.md#where-plugins-run) has the rules). Most of the blog's groups have one, and in those groups the plugin would never run: the span would keep the name `HTTP GET` and every query would start a trace of its own. Nova's `plugin_strategy` option can merge the two lists, but only for applications mounted through `nova_apps`, not for the bootstrap application. So the router puts the plugin at the front of every group that lists its own plugins:
+
+```erlang
+routes(_Environment) ->
+    [traced(Group) || Group <- route_groups()].
+```
+
+```erlang
+traced(#{plugins := Plugins} = Group) ->
+    Group#{plugins => [{pre_request, otel_nova_plugin, #{}} | Plugins]};
+traced(Group) ->
+    Group.
+```
+
+`route_groups/0` is the list of groups you have been writing since Part I. Doing it in one place means a group added later cannot forget it. Without `traced/1`, the request and query tests below fail, because `/api/posts` lives in a group with its own plugins.
+
+Arizona's live routes are handled by `arizona_cowboy_middleware` before `nova_router`, so Nova's plugins never run for them. They get the server span from the stream handler, named `HTTP GET`, but no route and no child spans.
+
+### Span names and `http.route`
+
+The plugin names the span `{METHOD} {route}` after the route template: a request for `/posts/42` is `GET /posts/:id`, and every file under the static `/assets/[...]` route is `GET /assets/[...]`. Nova does not hand the template to plugins, so the plugin rebuilds it from the path and the bindings. The README lists the two cases where the text comes out wrong (a literal segment equal to a binding value, and two bindings with the same value); the number of distinct names stays bounded by the route table either way, which matters for the metrics below. A request that matches no route keeps the name `HTTP GET` and has no `http.route`.
+
+### Whose trace context to trust
+
+Three settings decide how much of the incoming request the spans believe.
+
+**`trust_incoming_context`** (default `true`) continues a `traceparent` the client sends. That is what you want between your own services. The blog, though, faces the internet: any browser can send a `traceparent`, choose the trace id, force its request to be sampled, and attach `baggage` that would be passed to every service the request reaches. The production config turns it off:
+
+```erlang
+{opentelemetry_nova, [{trust_incoming_context, false}]},
+```
+
+With `false`, the server span starts a new trace and keeps the caller's span as a *link*, so a trace backend can still show where the request came from. The test config keeps the default, because the test for propagation needs it, and `untrusted_traceparent_starts_a_new_trace` checks the production setting.
+
+**`trust_forwarded_for`** (default `false`) takes `client.address` from `X-Forwarded-For` or `Forwarded`. The blog leaves it off. Behind the reverse proxy from [Deployment](deployment.md), `client.address` is then the proxy's address. Turning it on is only safe when the proxy replaces these headers; many proxies (nginx with `$proxy_add_x_forwarded_for`, Traefik, ingress-nginx) append to `X-Forwarded-For`, so the first entry is still whatever the client sent.
+
+**`metric_server_hosts`** (unset) is covered under [metrics](#metrics-for-prometheus).
+
+### Leaving probes out
+
+The load balancer calls `/heartbeat` and `/health` every few seconds. Each call would be a trace, and they would bury the requests you care about. `otel_nova_sampler` drops the server span of listed requests; the test and production configs use it:
+
+```erlang
+{opentelemetry, [
+    {span_processor, batch},
+    {traces_exporter, otlp},
+    {sampler, {parent_based, #{root => {otel_nova_sampler, [~"GET /heartbeat", ~"GET /health"]}}}}
+]},
+```
+
+The sampler decides when the stream handler starts the span, before Nova has routed the request, so an entry is the method and the raw request path, not a route template: `~"GET /posts/:id"` would not match `/posts/42`. Wrapped in `parent_based`, it only decides for requests that start a new trace; a request with a sampled `traceparent` follows its parent (unless `trust_incoming_context` is `false`, as in production). A dropped request still counts in the metrics, and its log lines still carry a trace id, with `otel_trace_flags` `"00"` (not sampled).
 
 ## Where traces go
 
@@ -155,12 +154,17 @@ The SDK is configured per environment:
 {opentelemetry, [{span_processor, batch}, {traces_exporter, none}]},
 
 %% test: hand each span to the test process as soon as it ends
-{opentelemetry, [{span_processor, simple}, {traces_exporter, none}]},
+{opentelemetry, [
+    {span_processor, simple},
+    {traces_exporter, none},
+    {sampler, {parent_based, #{root => {otel_nova_sampler, [~"GET /heartbeat", ~"GET /health"]}}}}
+]},
 
 %% prod: batch and send over OTLP
 {opentelemetry, [
     {span_processor, batch},
-    {traces_exporter, otlp}
+    {traces_exporter, otlp},
+    {sampler, {parent_based, #{root => {otel_nova_sampler, [~"GET /heartbeat", ~"GET /health"]}}}}
 ]},
 ```
 
@@ -184,14 +188,14 @@ curl -s 'localhost:3200/api/search?tags=service.name%3Dblog&limit=5'
 ```
 
 ```json
-{"traces":[{"traceID":"64962a6f7ba24137b7276be3c3deddfb","rootServiceName":"blog","rootTraceName":"GET blog_posts_controller:index","startTimeUnixNano":"1793699368800296389","durationMs":7}],...}
+{"traces":[{"traceID":"12447de5323200ed1e67c3480dfd3a20","rootServiceName":"blog","rootTraceName":"GET /api/posts","startTimeUnixNano":"1794090061709389931","durationMs":4},...
 ```
 
-Fetching that trace from Tempo (`/api/traces/<id>`) shows the request span and the two queries behind the post listing, each a child of the request span:
+Calls to `/health` and `/heartbeat` made in between do not show up: the sampler dropped them. Fetching a trace from Tempo (`/api/traces/<id>`) shows the request span and the two queries behind the post listing, each a child of the request span:
 
 | Scope | Span | Kind | `db.statement` |
 |---|---|---|---|
-| opentelemetry_nova | `GET blog_posts_controller:index` | server | |
+| opentelemetry_nova | `GET /api/posts` | server | |
 | opentelemetry_kura | `SELECT posts` | client | `SELECT * FROM "posts" WHERE "status" = $1 AND "deleted_at" IS NULL ORDER BY "inserted_at" DESC, "id" DESC LIMIT $2 OFFSET $3` |
 | opentelemetry_kura | `SELECT posts` | client | `SELECT count(*) AS "count" FROM "posts" WHERE "status" = $1 AND "deleted_at" IS NULL` |
 
@@ -199,56 +203,40 @@ The statements carry placeholders, not values; the spans only record how many pa
 
 ## Metrics for Prometheus
 
-opentelemetry_nova also ships a Prometheus exporter (`otel_nova_prom_exporter`) and a Cowboy handler that renders its table (`otel_nova_prom_handler`). Two more problems in 0.2.2:
+opentelemetry_nova ships a metric exporter that renders the Prometheus text format (`otel_nova_prom_exporter`) and a small HTTP listener that serves it on `/metrics` (`otel_nova_prom_server`).
 
-- The metrics SDK (`opentelemetry_experimental` 0.6.0) calls `Exporter:export/3` and `Exporter:shutdown/1`, while `otel_nova_prom_exporter` only exports `export/4` and `shutdown/0`. Configured as the README says, the reader never exports anything and `/metrics` stays empty.
-- `otel_nova_prom_server`, the listener the README starts with `opentelemetry_nova:setup(#{prometheus => #{port => 9464}})`, does not trap exits, so its Ranch listener survives an application restart and the next start fails with `already_started`.
-
-`blog_prom_exporter` adapts the exporter to the behaviour the reader expects:
-
-```erlang
--module(blog_prom_exporter).
--behaviour(otel_exporter_metrics).
-
--export([init/1, export/3, shutdown/1]).
-
-init(Config) ->
-    otel_nova_prom_exporter:init(Config).
-
-export(Metrics, Resource, State) ->
-    otel_nova_prom_exporter:export(metrics, Metrics, Resource, State).
-
-shutdown(_State) ->
-    otel_nova_prom_exporter:shutdown().
-```
-
-and `blog_metrics`, a small gen_server under `blog_sup`, owns the `/metrics` listener and stops it when it terminates:
-
-```erlang
-init(Port) ->
-    process_flag(trap_exit, true),
-    Dispatch = cowboy_router:compile([{'_', [{"/metrics", otel_nova_prom_handler, []}]}]),
-    {ok, _} = cowboy:start_clear(?MODULE, [{port, Port}], #{env => #{dispatch => Dispatch}}),
-    {ok, Port}.
-
-terminate(_Reason, _Port) ->
-    cowboy:stop_listener(?MODULE).
-```
-
-It is started only when `{blog, [{metrics_port, Port}]}` is set (9464 in dev, `${METRICS_PORT:-9464}` in prod, `0` in test). The metrics listener is separate from the blog's port on purpose: Prometheus scrapes it from inside your network, and the public load balancer never routes to it.
-
-The reader is configured in `opentelemetry_experimental`:
+The metrics SDK's reader is configured in `opentelemetry_experimental` with that exporter:
 
 ```erlang
 {opentelemetry_experimental, [
     {readers, [
         #{
             module => otel_metric_reader,
-            config => #{export_interval_ms => 10000, exporter => {blog_prom_exporter, #{}}}
+            config => #{export_interval_ms => 10000, exporter => {otel_nova_prom_exporter, #{}}}
         }
     ]}
 ]}
 ```
+
+The listener is a child of `blog_sup`, so it stops with the application:
+
+```erlang
+metrics_server() ->
+    case application:get_env(blog, metrics) of
+        {ok, Opts} -> [otel_nova_prom_server:child_spec(Opts)];
+        undefined -> []
+    end.
+```
+
+`Opts` comes from `{blog, [{metrics, Opts}]}` and goes to the listener as is: `port` (default 9464) and `ip` (default `{127, 0, 0, 1}`). Dev uses `#{port => 9464}`, test `#{port => 0}` (any free port, so suites running at the same time never collide). The README also shows `opentelemetry_nova:setup(#{prometheus => #{port => 9464}})`, which links the listener to the caller instead; under a supervisor is the better place.
+
+The metrics listener is separate from the blog's port on purpose: Prometheus scrapes it from inside your network, and the public load balancer never routes to it. `/metrics` has no authentication, which is why the listener binds loopback unless told otherwise. In a container, loopback is the container's own, and a Prometheus outside it gets connection refused. So production binds all interfaces:
+
+```erlang
+{metrics, #{port => ${METRICS_PORT:-9464}, ip => {0, 0, 0, 0}}},
+```
+
+and keeps the port private another way. [Deployment](deployment.md) publishes it on the host's loopback only (`-p 127.0.0.1:9464:9464`). In Kubernetes, add a `NetworkPolicy` that only admits the Prometheus pods to port 9464; the opentelemetry_nova README has one. If you run the release directly on a host instead of in a container, leave `ip` out.
 
 Every 10 seconds the reader collects and the exporter refreshes the table that `/metrics` renders. After a few requests to the release:
 
@@ -257,21 +245,19 @@ curl -s localhost:9464/metrics | grep -v '^#' | head -4
 ```
 
 ```
-http_server_active_requests{http_request_method="GET",server_address="127.0.0.1",server_port="58107",url_scheme="http"} 0
-http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",server_address="127.0.0.1",server_port="58107",url_scheme="http",le="0.005"} 2
-http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",server_address="127.0.0.1",server_port="58107",url_scheme="http",le="0.01"} 3
-http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",server_address="127.0.0.1",server_port="58107",url_scheme="http",le="0.025"} 4
+http_server_active_requests{http_request_method="GET",url_scheme="http"} 0
+http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",http_route="/api/posts",url_scheme="http",le="0.005"} 5
+http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",http_route="/api/posts",url_scheme="http",le="0.01"} 5
+http_server_request_duration_seconds_bucket{http_request_method="GET",http_response_status_code="200",http_route="/api/posts",url_scheme="http",le="0.025"} 6
 ```
 
-`server_address` and `server_port` come from the request's `Host` header, so they show the address the client used, not the port the node listens on.
+The labels are the method, the status, the scheme and `http_route`, the route template from the plugin. Because the route is a template and not the raw path, `/posts/1` and `/posts/2` share one series, and you can graph one endpoint's latency without the number of series growing with your data. Methods outside the nine standard ones become `_OTHER`. Each metric keeps at most 2000 series; anything beyond goes into one series labelled `otel_metric_overflow="true"`.
 
-```admonish note
-The metric labels have no route or controller, only method, status, scheme and host. That keeps the number of series small, but you cannot graph one endpoint's latency from these metrics. Use the traces for that.
-```
+`server_address` and `server_port` are not there. They come from the request's `Host` header, which the client chooses, so opentelemetry_nova only records them for hosts you list in `{opentelemetry_nova, [{metric_server_hosts, [...]}]}` (others become `_OTHER`). The blog has one host and does not set it.
 
 ## Logs that point at traces
 
-Once the context is attached in the request process, the SDK puts `otel_trace_id`, `otel_span_id` and `otel_trace_flags` into the process's logger metadata. Every `?LOG_*` call made while handling the request carries them, with no code in the controller.
+When `otel_nova_plugin` attaches the context in the request process, the SDK puts `otel_trace_id`, `otel_span_id` and `otel_trace_flags` into the process's logger metadata, and the plugin adds the same ids as `trace_id` and `span_id`. Every `?LOG_*` call made while handling the request carries them, with no code in the controller.
 
 The production config logs one JSON object per line with `nova_jsonlogger`, a formatter that ships inside Nova (it encodes with the `json_lib` you configured, so OTP `json` here):
 
@@ -290,10 +276,10 @@ The production config logs one JSON object per line with `nova_jsonlogger`, a fo
 The `progress` filter drops OTP's supervisor and application progress reports, about 150 lines at every boot that say nothing a log reader needs. A request line from the request logger plugin built in the [next chapter](plugins-cors.md):
 
 ```json
-{"line":20,"pid":"<0.1402.0>","status":200,"time":1793698949603639,"file":".../src/plugins/blog_request_logger.erl","path":"/health","gl":"<0.1297.0>","msg":"request","level":"info","mfa":"blog_request_logger:post_request/4","method":"GET","otel_span_id":"2be424fb003bdcc6","otel_trace_flags":"01","otel_trace_id":"0dcb2eaa63888b6ae85d41e6905288c8","duration_us":1813}
+{"line":20,"pid":"<0.1524.0>","status":200,"time":1794090061721075,"file":".../src/plugins/blog_request_logger.erl","path":"/api/posts","gl":"<0.1373.0>","msg":"request","level":"info","mfa":"blog_request_logger:post_request/4","method":"GET","span_id":"ea0de880798a649c","trace_id":"ecfce5117418849fe60bccea453d8d24","otel_span_id":"ea0de880798a649c","otel_trace_flags":"01","otel_trace_id":"ecfce5117418849fe60bccea453d8d24","duration_us":2864}
 ```
 
-Search your trace backend for `otel_trace_id` and you have the spans of exactly that request.
+Search your trace backend for the `trace_id` and you have the spans of exactly that request. Log lines written before `otel_nova_plugin` runs (by a plugin listed ahead of it, or by Nova's router) have no trace id.
 
 ## Testing spans
 
@@ -303,6 +289,7 @@ The test config uses the `simple` span processor, which exports each span as soo
 -include_lib("opentelemetry/include/otel_span.hrl").
 
 -define(TRACE_ID, 16#4bf92f3577b34da6a3ce929d0e0e4736).
+-define(TRACEPARENT, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
@@ -318,6 +305,12 @@ receive_span(Name) ->
         {span, #span{name = Name} = Span} -> Span
     after 5000 -> ct:fail({no_span, Name})
     end.
+
+flush() ->
+    receive
+        Message -> [Message | flush()]
+    after 0 -> []
+    end.
 ```
 
 `blog_prod_telemetry_SUITE` checks the request span, the parent of the query spans and trace propagation:
@@ -325,11 +318,10 @@ receive_span(Name) ->
 ```erlang
 request_gets_a_server_span(_Config) ->
     {200, _} = blog_data_fixtures:request(get, "/api/posts"),
-    #span{kind = server, attributes = Attributes} = receive_span(
-        ~"GET blog_posts_controller:index"
-    ),
+    #span{kind = server, attributes = Attributes} = receive_span(~"GET /api/posts"),
     #{
         'http.request.method' := ~"GET",
+        'http.route' := ~"/api/posts",
         'url.path' := ~"/api/posts",
         'http.response.status_code' := 200,
         'nova.app' := ~"blog",
@@ -340,7 +332,7 @@ request_gets_a_server_span(_Config) ->
 queries_are_children_of_the_request_span(_Config) ->
     {200, _} = blog_data_fixtures:request(get, "/api/posts"),
     Query = receive_span(~"SELECT posts"),
-    Request = receive_span(~"GET blog_posts_controller:index"),
+    Request = receive_span(~"GET /api/posts"),
     ?assertEqual(Request#span.trace_id, Query#span.trace_id),
     ?assertEqual(Request#span.span_id, Query#span.parent_span_id),
     #{'db.system' := ~"postgresql", 'db.statement' := Statement} =
@@ -348,17 +340,67 @@ queries_are_children_of_the_request_span(_Config) ->
     ?assertMatch({match, _}, re:run(Statement, ~"\\$1")).
 
 traceparent_continues_the_callers_trace(_Config) ->
-    Traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     {ok, {{_, 200, _}, _, _}} = httpc:request(
-        get, {blog_data_fixtures:url("/api/posts"), [{"traceparent", Traceparent}]}, [], []
+        get, {blog_data_fixtures:url("/api/posts"), [{"traceparent", ?TRACEPARENT}]}, [], []
     ),
-    #span{trace_id = TraceId, parent_span_id = Parent} =
-        receive_span(~"GET blog_posts_controller:index"),
+    #span{trace_id = TraceId, parent_span_id = Parent} = receive_span(~"GET /api/posts"),
     ?assertEqual(?TRACE_ID, TraceId),
     ?assertEqual(16#00f067aa0ba902b7, Parent).
 ```
 
-Two tests pin the upstream problems on a bare Cowboy listener with only `otel_nova_stream_h`: a handler there sees `undefined` as its current span, and a `sendfile` reply comes back as 500. When a fixed opentelemetry_nova is released, those two fail, and that is your cue to delete `blog_otel_h`. The others check that `/robots.txt` gets a span named `GET nova_file_controller:get_file`, that after `otel_meter_server:force_flush()` the `/metrics` page has `http_server_request_duration_seconds`, that `otel_nova_prom_exporter` still lacks `export/3`, and that `blog` can be stopped and started again with the metrics listener coming back.
+The production value of `trust_incoming_context` is tested by setting it for one case. opentelemetry_nova reads it on every request, so `application:set_env/3` is enough:
+
+```erlang
+untrusted_traceparent_starts_a_new_trace(_Config) ->
+    ok = application:set_env(opentelemetry_nova, trust_incoming_context, false),
+    try
+        {ok, {{_, 200, _}, _, _}} = httpc:request(
+            get, {blog_data_fixtures:url("/api/posts"), [{"traceparent", ?TRACEPARENT}]}, [], []
+        ),
+        #span{trace_id = TraceId, parent_span_id = Parent, links = Links} =
+            receive_span(~"GET /api/posts"),
+        ?assertNotEqual(?TRACE_ID, TraceId),
+        ?assertEqual(undefined, Parent),
+        [#link{trace_id = ?TRACE_ID, span_id = 16#00f067aa0ba902b7}] = otel_links:list(Links)
+    after
+        application:unset_env(opentelemetry_nova, trust_incoming_context)
+    end.
+```
+
+The sampler test makes a probe request and then a normal one, waits for the normal span and checks that no server span for `/heartbeat` arrived before it:
+
+```erlang
+probes_are_not_traced(_Config) ->
+    {200, _} = blog_data_fixtures:request(get, "/heartbeat"),
+    {200, _} = blog_data_fixtures:request(get, "/api/posts"),
+    _ = receive_span(~"GET /api/posts"),
+    Probes = [
+        Span
+     || {span, #span{kind = server, attributes = Attributes} = Span} <- flush(),
+        maps:get('url.path', otel_attributes:map(Attributes)) =:= ~"/heartbeat"
+    ],
+    ?assertEqual([], Probes).
+```
+
+The metrics test reads the listener's address from Ranch. `otel_nova_prom_listener` is the listener's name inside opentelemetry_nova, not a documented API, but with port 0 there is no other way to learn the port. It also checks that the listener stayed on loopback:
+
+```erlang
+metrics_are_served_for_prometheus(_Config) ->
+    {200, _} = blog_data_fixtures:request(get, "/api/posts"),
+    ok = otel_meter_server:force_flush(),
+    {{127, 0, 0, 1}, Port} = ranch:get_addr(otel_nova_prom_listener),
+    Url = "http://127.0.0.1:" ++ integer_to_list(Port) ++ "/metrics",
+    {ok, {{_, 200, _}, _, Body}} = httpc:request(get, {Url, []}, [], [{body_format, binary}]),
+    ?assertMatch(
+        {match, _}, re:run(Body, ~"# TYPE http_server_request_duration_seconds histogram")
+    ),
+    ?assertMatch(
+        {match, _},
+        re:run(Body, ~"http_server_request_duration_seconds_count\\{[^}]*http_route=\"/api/posts\"")
+    ).
+```
+
+The rest check that `/robots.txt` and a file under `/assets` (both `sendfile` replies) get spans named `GET /robots.txt` and `GET /assets/[...]`, that the `request` log line carries the caller's trace id as both `otel_trace_id` and `trace_id`, and that stopping `blog` stops the metrics listener and starting it brings the listener back.
 
 ```shell
 rebar3 ct --suite=test/blog_prod_telemetry_SUITE
