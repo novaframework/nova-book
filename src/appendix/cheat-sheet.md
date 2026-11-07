@@ -39,7 +39,7 @@ Quick reference for the APIs this book uses, at the versions it was tested with:
 - `methods => [get, post, ...]` (lowercase atoms, default `'_'`); a known path with the wrong method gets `405`.
 - `:name` segments are bindings with **binary** keys and raw (percent-encoded) values: `#{bindings := #{~"id" := Id}}`.
 - `[...]` at the end matches the rest of the path.
-- `rebar3 nova serve` does not reload routes; restart after editing the router.
+- `rebar3 nova serve` re-registers the routes when you save the router.
 
 ## Controller return values
 
@@ -533,11 +533,11 @@ Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `
 | Command | Does |
 |---|---|
 | `rebar3 new nova blog` | New project from the `nova` template |
-| `rebar3 nova serve` | Dev server with reload (needs `inotifywait` on Linux; restart after router edits) |
+| `rebar3 nova serve` | Dev server with reload, router included (needs `inotifywait` on Linux) |
 | `rebar3 nova routes`, `middleware`, `audit`, `config`, `doctor` | Inspect routes, plugin chains, unsecured routes, config, project health |
-| `rebar3 nova gen_controller --name pages --actions about,contact` | Controller stub (run `rebar3 fmt` after) |
-| `rebar3 nova gen_resource --name tags`, `gen_test --name tags` | Resource controller, JSON schema and route hints; a CT suite to fix up |
-| `rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-version 1.0.0` | OpenAPI spec from the routes |
+| `rebar3 nova gen_controller --name pages --actions about,contact` | Controller stub that takes the request |
+| `rebar3 nova gen_resource --name tags`, `gen_test --name tags` | Resource controller, draft-06 JSON schema and route group hints; a CT suite to adapt |
+| `rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-version 1.0.0 --prefix /api` | OpenAPI spec of the routes under `/api` |
 | `rebar3 kura setup --name blog_repo` | Repo module and migrations directory |
 | `rebar3 kura compile` | Generate migrations from schema changes (also a compile hook) |
 | `rebar3 kura check` | Fail on schemas without migrations; run before compiling |

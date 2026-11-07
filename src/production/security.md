@@ -78,7 +78,7 @@ Part III built authentication and a policy module. Reviewing the routes for this
     routes => [
         {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
         {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}},
-        {"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
+        {"/openapi.json", "openapi/openapi.json", #{mimetype => ~"application/json"}}
     ]
 },
 #{
@@ -256,29 +256,32 @@ rebar3 nova audit
 ```
 === Security Audit ===
 
+  Audited routes(dev) of blog. Not covered: 2 websocket/cowboy handler route(s), static files and error pages, arizona_nova routes (served before nova_router). nova_apps read from ./config/dev_sys.config.src.
+
   WARNINGS:
-    POST /hello (blog_hello_controller) has no security
-    POST /contact (blog_contact_controller) has no security
-    POST /login (blog_session_controller) has no security
-    POST /register (blog_registration_controller) has no security
     POST /api/tokens (blog_tokens_controller) has no security
-    Wildcard method on /robots.txt (nova_file_controller) - all HTTP methods accepted
-    PATCH /robots.txt (nova_file_controller) has no security
-    ...
+    POST /contact (blog_contact_controller) has no security
+    POST /hello (blog_hello_controller) has no security
+    POST /login (blog_session_controller) has no security
+    POST /password/forgot (blog_account_controller) has no security
+    POST /register (blog_registration_controller) has no security
 
   INFO:
     GET / (blog_main_controller) has no security
-    GET /heartbeat (blog_router) has no security
-    GET /health (blog_health_controller) has no security
     ...
-    GET /api/tags/{id} (blog_tags_controller) has no security
     GET /api/tags (blog_tags_controller) has no security
-    GET /robots.txt (nova_file_controller) has no security
+    GET /api/tags/{id} (blog_tags_controller) has no security
+    ...
+    GET /health (blog_health_controller) has no security
+    GET /heartbeat (blog_router) has no security
+    ...
 
-  Summary: 14 warning(s), 13 info(s)
+  Summary: 6 warning(s), 11 info(s)
 ```
 
-The tag writes are gone from the warnings, and the posts API no longer shows up at all because its read group now has a security function. What is left is intended: the credential endpoints (rate-limited), the Part I demos, and `/robots.txt`, a static route that answers every method with the file (a `POST` gets the same 200 and body as a `GET`; nothing is written).
+The tag writes are gone from the warnings, and the posts API no longer shows up at all because its read group now has a security function. What is left is intended: the credential endpoints (rate-limited, `POST /password/forgot` included), and the Part I demos. The WebSocket routes are not covered by the audit; their upgrade is checked by `blog_ws_security:same_origin/1` ([WebSockets](../real-time/websockets.md#securing-the-upgrade)). Static files are not covered either. A static route accepts every method: a `POST` to `/robots.txt` gets the same 200 and body as a `GET`, and nothing is written.
+
+`rebar3 nova audit --env prod --config config/prod_sys.config.src` audits the routes the production config compiles; it reads `${VAR}` references from the environment. Add `--strict` to fail on any warning.
 
 ## XSS
 
@@ -298,7 +301,7 @@ JSON responses go out as `application/json`, which browsers do not render as HTM
 
 ### No third-party scripts
 
-`rebar3 nova openapi` writes a `swagger.html` that loads Swagger UI from unpkg.com. A page that pulls JavaScript from a CDN at view time gives that CDN (and anyone who compromises it) script access to your origin, and it sends your visitors' IP addresses to a third party. The blog serves only `openapi.json` and no Swagger page ([API Documentation](../building-api/openapi-tools.md)); every script, stylesheet and font it uses is in its own `priv/`.
+Interactive API pages such as Swagger UI are often loaded from a CDN. A page that pulls JavaScript from a CDN at view time gives that CDN (and anyone who compromises it) script access to your origin, and it sends your visitors' IP addresses to a third party. The blog serves only `openapi.json` and no Swagger page ([API Documentation](../building-api/openapi-tools.md)); every script, stylesheet and font it uses is in its own `priv/`.
 
 ### Security headers
 

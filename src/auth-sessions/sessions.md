@@ -66,7 +66,7 @@ Put `use_sessions` in the `nova` section instead and it is silently ignored.
 A backend implements the `nova_session` behaviour: `get_value/2`, `set_value/3`, `delete_value/1` (whole session), `delete_value/2` (one key) and an optional `start_link/0`. If the module exports `start_link/0`, Nova starts it under its own supervisor.
 
 ```admonish tip title="rebar3 nova doctor"
-`rebar3 nova doctor` warns about a missing `session_backend` setting. Nova reads `session_manager`, not `session_backend`, so ignore that warning; there is nothing to add.
+`rebar3 nova doctor -v` shows the session backend in use: `session_manager = nova_session_ets` for the blog. It also warns when the config sets `session_backend`, a key some older guides use that Nova never reads.
 ```
 
 ## What the defaults get wrong

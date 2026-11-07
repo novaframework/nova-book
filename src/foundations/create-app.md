@@ -10,7 +10,7 @@ You need Erlang/OTP 29 and rebar3 (Nova itself runs on OTP 28; Arizona in Part V
 
 ```erlang
 {plugins, [
-    {rebar3_nova, "~> 0.13"}
+    {rebar3_nova, "~> 0.14"}
 ]}.
 ```
 
@@ -22,13 +22,19 @@ rebar3 plugins list
 
 ```
 --- Global plugins ---
-rebar3_nova (0.13.3)
+rebar3_nova (0.14.0)
 ```
 
 When a new release comes out, `rebar3 plugins upgrade rebar3_nova` updates it.
 
 ```admonish note
-The `rebar3_nova` repository also ships an `install.sh` script. It installs the plugin from the GitHub `master` branch rather than from Hex, and it rewrites your global `rebar.config` (dropping any comments in it). Editing the file by hand as above gives you a released, versioned plugin and leaves the rest of your config alone.
+The `rebar3_nova` repository also has a one-line installer, fetched from the `v0.14.0` release tag:
+
+~~~shell
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/novaframework/rebar3_nova/v0.14.0/install.sh)"
+~~~
+
+It adds `{rebar3_nova, "~> 0.13"}` to the same file as text, keeps the rest of the file as it is, and leaves the file alone if `rebar3_nova` is already listed. `~> 0.13` accepts every 0.x release from 0.13 on, so it installs 0.14.0 too. The book uses commands that need 0.14, which is why the line above says `~> 0.14`.
 ```
 
 ## Creating a new project
@@ -49,6 +55,8 @@ rebar3 new nova blog
 ===> Writing blog/src/controllers/blog_main_controller.erl
 ===> Writing blog/rebar.config
 ===> Writing blog/config/vm.args.src
+===> Writing blog/config/dev_vm.args.src
+===> Writing blog/rel/hooks/require_cookie
 ===> Writing blog/priv/assets/favicon.ico
 ===> Writing blog/src/views/blog_main.dtl
 ===> Writing blog/.tool-versions
@@ -56,7 +64,7 @@ rebar3 new nova blog
 ```
 
 ```admonish tip
-`rebar3 nova new` is a newer command with flags such as `--kura`, `--arizona` and `--docker`. In 0.13 those flags still generate older dependency sets (for example the deprecated `arizona_core`), so this book starts from the plain `rebar3 new nova` template and adds dependencies by hand as each part needs them.
+`rebar3 nova new` is a newer command with flags such as `--kura`, `--arizona` and `--docker` that add a data layer, live views or a Dockerfile in one go. This book starts from the plain `rebar3 new nova` template instead and adds each dependency in the chapter that needs it, so you see every piece arrive.
 ```
 
 ## Project structure
@@ -67,12 +75,16 @@ blog
 ├── .tool-versions
 ├── config
 │   ├── dev_sys.config.src
+│   ├── dev_vm.args.src
 │   ├── prod_sys.config.src
 │   └── vm.args.src
 ├── priv
 │   └── assets
 │       └── favicon.ico
 ├── rebar.config
+├── rel
+│   └── hooks
+│       └── require_cookie
 └── src
     ├── blog.app.src
     ├── blog_app.erl
@@ -89,15 +101,17 @@ blog
 - **`src/views/`** - ErlyDTL (Django-style) templates, compiled to Erlang modules before the sources
 - **`src/blog_app.erl`, `src/blog_sup.erl`** - the OTP application callback and its top supervisor
 - **`config/dev_sys.config.src`** - development configuration, used by `rebar3 shell` and `rebar3 nova serve`
-- **`config/prod_sys.config.src`, `config/vm.args.src`** - release configuration and VM flags
+- **`config/prod_sys.config.src`, `config/vm.args.src`** - production release configuration and VM flags
+- **`config/dev_vm.args.src`** - VM flags for a development release (`rebar3 release`)
+- **`rel/hooks/require_cookie`** - a start hook for production releases (below)
 - **`priv/`** - files shipped with the application (static assets, data files)
 - **`rebar.config`** - dependencies, profiles, release settings and plugins
 
-The generated `rebar.config` depends on `nova` from Hex and lists `rebar3_nova` again as a *project* plugin, fetched from the GitHub `master` branch. Inside the project that copy wins over your global one, so `rebar3 nova ...` in the project directory runs whatever is on `master` at the time you first fetched it. For the companion app that is 0.13.4, one release ahead of Hex; where a later chapter names a `rebar3_nova` version, it is this project plugin. If you prefer a released version, change the entry to `{rebar3_nova, "~> 0.13"}`.
+The generated `rebar.config` depends on `{nova, "~> 0.18"}` from Hex and lists `{rebar3_nova, "~> 0.13"}` again as a *project* plugin. Inside the project that copy wins over your global one. Both come from Hex, and a fresh project resolves `~> 0.13` to the newest 0.x release, 0.14.0 at the time of writing. The companion app pins `{rebar3_nova, "~> 0.14"}`, since the book relies on 0.14's commands.
 
-```admonish note
-`.tool-versions` pins Erlang 28.0.4 and rebar 3.25.0 for mise and asdf. The book uses OTP 29 and rebar3 3.27; bump the pins or delete the file if mise or asdf would otherwise install the older toolchain.
-```
+`.tool-versions` pins Erlang 29.1.2 and rebar 3.27.0 for mise and asdf, the toolchain this book uses.
+
+The release configs name the node `blog@localhost` and keep Erlang distribution on the loopback interface. A development release takes the distribution cookie from `~/.erlang.cookie`. A production release (`rebar3 as prod release`) reads it from the `RELEASE_COOKIE` environment variable, and `rel/hooks/require_cookie` stops `bin/blog` from starting the node without it. [Deployment](../production/deployment.md) covers releases.
 
 ## Running the application
 
@@ -114,57 +128,28 @@ rebar3 nova serve
 ===> Compiled blog_main_controller with warnings: []
 ```
 
-The watcher uses the [`fs`](https://hex.pm/packages/fs) library. macOS works out of the box. On Linux `fs` needs `inotifywait` from the `inotify-tools` package (`apt install inotify-tools`, `dnf install inotify-tools`, ...). Without it the server still starts, but every watched directory logs
+Editing the router works the same way: serve recompiles it and registers its routes again, so a new route answers without a restart:
 
 ```
-backend port not found: inotifywait
+===> Compiled blog_router with warnings: []
+===> Reloaded routes for blog
 ```
 
-and nothing is reloaded. `rebar3 shell` starts the same node without the watcher.
+The watcher uses the [`fs`](https://hex.pm/packages/fs) library. macOS works out of the box. On Linux `fs` needs `inotifywait` from the `inotify-tools` package (`apt install inotify-tools`, `dnf install inotify-tools`, ...). Without it the server still starts, but nothing is reloaded, and serve says so when it boots:
 
-```admonish warning title="Router changes need a restart"
-The watcher recompiles `blog_router.erl` like any other module, but the route table is built once at startup. After editing the router, stop the shell (`Ctrl+G`, then `q`) and run `rebar3 nova serve` again.
 ```
+===> rebar3 nova serve needs inotifywait to watch files. Install inotify-tools (apt install inotify-tools, dnf install inotify-tools, pacman -S inotify-tools). Code reloading is off; restart serve after installing it.
+```
+
+`rebar3 shell` starts the same node without the watcher.
 
 Among the boot logs you should find:
 
 ```
-=NOTICE REPORT==== 3-Nov-2026::08:26:52.248271 ===
-    msg: <<"Nova is running">>
-    url: <<"http://0.0.0.0:8080">>
-    app: blog
-    cowboy_version: <<"2.18.0">>
-    nova_version: <<"0.18.1">>
+[notice] [2026-11-07T22:23:55.856654+00:00] nova_version=0.18.1 cowboy_version=2.18.0 app=blog url=http://0.0.0.0:8080 msg="Nova is running"  (nova_sup:setup_cowboy/1)
 ```
 
-That message is buried in a wall of `PROGRESS REPORT`s, because the generated `dev_sys.config.src` sets the log level to `debug` and its formatter setting never takes effect.
-
-```admonish bug title="Fixing the generated logger config"
-The template puts a bare `#{formatter => ...}` map in the `kernel` section, which OTP ignores. Wrap it in a `logger` handler entry instead (this is what the companion app uses):
-
-~~~erlang
-{kernel, [
-    {logger_level, debug},
-    {logger, [
-        {handler, default, logger_std_h, #{
-            formatter => {flatlog, #{
-                map_depth => 3,
-                term_depth => 50,
-                colored => true,
-                template => [colored_start, "[\033[1m", level, "\033[0m", colored_start, "] [", time, "]",
-                             colored_end, " ", msg, " (", mfa, ")\n"]
-            }}
-        }}
-    ]}
-]},
-~~~
-
-Now each event is a single line:
-
-~~~
-[notice] [2026-11-03T07:25:12.812456+00:00] nova_version=0.18.1 cowboy_version=2.18.0 app=blog url=http://0.0.0.0:8080 msg="Nova is running"  (nova_sup:setup_cowboy/1)
-~~~
-```
+The generated `dev_sys.config.src` formats every log event as one line with [flatlog](https://hex.pm/packages/flatlog) and sets the level to `debug`, so the supervisors' progress reports are printed too. Raise `logger_level` to `notice` if they get in the way.
 
 Open `http://localhost:8080` in a browser to see the welcome page rendered from `blog_main.dtl`, or check the health endpoint from another terminal:
 
@@ -190,9 +175,8 @@ rebar3 nova routes
 ```
 
 ```
-Host: '_'
-     ├─  GET /heartbeat (blog, blog_router:-routes/1-fun-0-/1)
-     └─  GET / (blog, blog_main_controller:index/1)
+get      /                                        blog_main_controller:index/1
+get      /heartbeat                               blog_router:-routes/1-fun-0-/1
 ```
 
 The heartbeat route is an anonymous function in the router, hence the odd-looking name.
@@ -214,11 +198,8 @@ rebar3 nova doctor
 ✅ Project structure
     (3 ok, run with -v for detail)
 
-⚠️ Configuration    2 warning(s)
-    ! json_lib defaults to thoas
-        hint: Set {json_lib, json} in sys.config to use OTP 27+ built-in json module
-    ! session_backend unset (defaults to ETS)
-        hint: Fine for dev; pick a durable backend for production
+✅ Configuration
+    (3 ok, run with -v for detail)
 
 ✅ Routes
     (3 ok, run with -v for detail)
@@ -233,12 +214,10 @@ rebar3 nova doctor
     (2 ok, run with -v for detail)
 
 --
-Summary: 16 ok, 2 warning(s), 0 error(s)
+Summary: 18 ok, 0 warning(s), 0 error(s)
 ```
 
-```admonish warning
-Do not follow the `json_lib` hint literally. Nova reads `json_lib` from your *application's* environment, not from the `nova` section, and expects a `decode/1` that returns `{ok, Term}`. OTP's `json:decode/1` returns the term directly, so `{json_lib, json}` makes every JSON request body fail with a 400. The [Plugins](plugins.md#choosing-the-json-library) chapter shows the three-line adapter the blog uses instead. The doctor keeps showing both warnings either way; they are advisory.
-```
+`rebar3 nova doctor -v` prints every check. The configuration checks read `json_lib` and `use_sessions` from your application's environment, where Nova reads them, and check that the JSON module has `encode/1` and `decode/1`. Run the doctor again whenever you change the config or the router.
 
 ## From scaffold to the companion app
 
@@ -246,6 +225,7 @@ The finished blog lives in [`examples/blog`](https://github.com/novaframework/no
 
 - **Dependencies** - `rebar.config` gains `kura` and `kura_postgres` (data layer on PostgreSQL via minato), `nova_auth` (authentication), `shigoto` (background jobs), `hikyaku` (email), `arizona_nova` (real-time views), `nova_json_schemas` (request validation) and `opentelemetry`, `opentelemetry_exporter`, `opentelemetry_nova` and `opentelemetry_kura` (observability). The test profile adds `nova_test` and `gun` (a WebSocket client for the real-time tests).
 - **Plugins** - `rebar3_kura` joins the project plugins and a `{compile, {kura, compile}}` hook runs next to the ErlyDTL one.
+- **Releases** - the blog was scaffolded before the template split its VM flags, so its development flags are in `config/vm.args.src` and its production flags in `config/prod_vm.args.src` (see [Configuration](../production/configuration.md)).
 - **Configuration** - `config/test_sys.config` is added for Common Test, the configs gain a `kura` section with the repo settings, and a `blog` section holds the app's own settings (the JSON library, tokens and so on).
 - **Code** - controllers, views, schemas, migrations and tests under `src/`, `priv/` and `test/`, chapter by chapter.
 
@@ -255,10 +235,6 @@ You can follow along in your own scaffold or check out the companion app and rea
 cd examples/blog
 docker compose up -d
 rebar3 ct
-```
-
-```admonish bug title="If rebar3 ct fails on a fresh scaffold"
-The template's test profile pins `meck` 1.1.0, which does not compile on OTP 29 (`'catch ...' is deprecated` becomes an error under `warnings_as_errors`). Change the pin in `rebar.config` to `{meck, "1.2.0"}`. If you already ran `rebar3 ct` once, also run `rebar3 as test upgrade meck` so the old copy in `_build/test` is replaced.
 ```
 
 ---

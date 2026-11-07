@@ -218,14 +218,14 @@ rebar3 nova middleware
                                        read_urlencoded_body => true}
   Routes:
     GET / -> blog_main_controller:index
-    GET /heartbeat -> blog_router:-routes/1-fun-0-
+    GET /heartbeat -> fun in blog_router
 ...
   Group: prefix=/hello  security=false
   Plugins:
-    pre_request: nova_correlation_plugin #{request_correlation_header =>
-                                               <<"x-correlation-id">>,
-                                           logger_metadata_key =>
-                                               correlation_id}
+    pre_request: nova_correlation_plugin #{logger_metadata_key =>
+                                               correlation_id,
+                                           request_correlation_header =>
+                                               <<"x-correlation-id">>}
     pre_request: nova_cors_plugin #{allow_origins => <<"*">>}
     pre_request: nova_request_plugin #{decode_json_body => true,
                                        read_urlencoded_body => true,
@@ -234,11 +234,18 @@ rebar3 nova middleware
     POST / -> blog_hello_controller:create
     GET,OPTIONS /:name -> blog_hello_controller:greet
 ...
+  Group: prefix=/  security=false
+  Plugins:
+    (inherits global)
+    pre_request: nova_request_plugin #{decode_json_body => true,
+                                       read_urlencoded_body => true}
+  Routes:
+    STATIC /robots.txt -> assets/robots.txt
+    STATIC /assets/[...] -> assets
+    STATUS 404 -> blog_error_controller:not_found
 ```
 
-```admonish bug
-In rebar3_nova 0.13 `middleware` crashes with a `function_clause` when it reaches a static file route or a status-code route. The blog keeps those in its last route group, so every group with plugins is printed before the crash.
-```
+A group without `plugins` inherits the global list; a group with its own list shows only that list. Static file routes and status-code routes are listed too, so the last group shows `STATIC` and `STATUS` entries. The inline heartbeat fun is shown as `fun in blog_router`.
 
 ## CSRF protection
 

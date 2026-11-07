@@ -1,11 +1,11 @@
 # API Documentation & Inspection
 
-An API is only as useful as its documentation. `rebar3 nova openapi` builds an [OpenAPI](https://spec.openapis.org/oas/v3.0.3) description from the routes you already have. This chapter generates one for the blog, looks honestly at what it contains, and serves the API part of it. Then we point the inspection commands from Part I (`routes`, `middleware`, `audit`, `doctor`) and `rebar3 nova config` at the API.
+An API is only as useful as its documentation. `rebar3 nova openapi` builds an [OpenAPI](https://spec.openapis.org/oas/v3.0.3) description from the routes you already have. This chapter generates one for the blog's API, looks honestly at what it contains, and serves it. Then we point the inspection commands from Part I (`routes`, `middleware`, `audit`, `doctor`) and `rebar3 nova config` at the API.
 
 ## Generating the spec
 
 ```shell
-rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-version 1.0.0
+rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-version 1.0.0 --prefix /api
 ```
 
 ```
@@ -15,7 +15,6 @@ rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-
 ===> Analyzing applications...
 ===> Compiling blog
 ===> OpenAPI spec written to priv/openapi/openapi.json
-===> Swagger UI written to priv/openapi/swagger.html
 ```
 
 | Flag | Default | Meaning |
@@ -23,52 +22,47 @@ rebar3 nova openapi --output priv/openapi/openapi.json --title "Blog API" --api-
 | `--output`, `-o` | `priv/assets/openapi.json` | Where to write the spec |
 | `--title`, `-t` | the application name | `info.title` |
 | `--api-version`, `-v` | `0.1.0` | `info.version` |
+| `--prefix`, `-p` | every controller route | Only document paths under this prefix |
 
-The command compiles the project, calls your router and builds the routing table from it, so the spec lists the routes the code actually defines. (The plugin brings its own copy of Nova, 0.15.3 in rebar3_nova 0.13.4, to do this; for ordinary route groups the result is the same.) It also reads every `*.json` file in `priv/schemas/` into `components.schemas`, named after the file.
+The command compiles the project, calls your router and builds the routing table with the project's own Nova, so the spec lists the routes the code actually defines. Static file routes, status-code routes and inline funs such as `/heartbeat` are left out. `--prefix /api` leaves out the HTML pages as well, so the spec is the API and nothing else. The command also reads every `*.json` file under `priv/schemas/`, subdirectories included, into `components.schemas`, named after the file's path (`tag.json` is `tag`, `v1/user.json` would be `v1.user`).
 
 ```admonish warning
-Do not keep the default output directory. `priv/assets/` is served by the blog's `/assets/[...]` route, and the command writes a `swagger.html` next to the spec that loads Swagger UI's JavaScript and CSS from `unpkg.com`. The blog writes the spec to `priv/openapi/`, which is not served, and lists both `swagger.html` locations in `.gitignore`.
+Keep `--output`. The default, `priv/assets/`, is served by the blog's `/assets/[...]` route, so the spec would be public at `/assets/openapi.json` whether you meant to publish it or not. The blog writes it to `priv/openapi/`, which no route serves as a directory, and publishes that one file below.
 ```
 
 ### What is in it
 
-A route with a `json_schema` in its `extra_state` (the same option `nova_json_schemas` uses, see [the previous chapter](json-api.md#routes)) gets a request body and a response that point at that schema. Here is `/api/tags`, formatted:
+A route with a `json_schema` in its `extra_state` (the same option `nova_json_schemas` uses, see [the previous chapter](json-api.md#routes)) gets a request body that points at that schema. The responses follow the method: `201` for a `POST`, `204` for a `DELETE`, `200` otherwise, plus `400` when there is a request schema and `404` when the path has a binding. Here is `/api/tags`:
 
 ```json
 {
-  "paths": {
-    "/api/tags": {
-      "get": {
-        "operationId": "blog_tags_controller.list",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          }
+  "/api/tags": {
+    "get": {
+      "operationId": "blog_tags_controller.list",
+      "responses": {
+        "200": {
+          "description": "Successful response"
         }
-      },
-      "post": {
-        "operationId": "blog_tags_controller.create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/tag"
-              }
+      }
+    },
+    "post": {
+      "operationId": "blog_tags_controller.create",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/tag"
             }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/tag"
-                }
-              }
-            },
-            "description": "Successful response"
           }
+        },
+        "required": true
+      },
+      "responses": {
+        "201": {
+          "description": "Created"
+        },
+        "400": {
+          "description": "Invalid request body"
         }
       }
     }
@@ -76,41 +70,24 @@ A route with a `json_schema` in its `extra_state` (the same option `nova_json_sc
 }
 ```
 
-Bindings become path parameters: `/tags/:id` is documented as `/api/tags/{id}` with a required string parameter `id`. The `operationId` is `module.function`, which makes it easy to find the code behind an operation.
+Bindings become path parameters: `/tags/:id` is documented as `/api/tags/{id}` with a required string parameter `id`. The `operationId` is `module.function`, which makes it easy to find the code behind an operation. When one function serves several methods, as `blog_posts_controller:index/1` serves `GET` and `OPTIONS`, the method and path are appended (`blog_posts_controller.index:get:/api/posts`) so every operation keeps a unique id. The `$schema` key of `tag.json` is dropped from the component, since an OpenAPI 3.0 schema object does not allow it.
 
-```admonish bug title="Limits of the generator (rebar3_nova 0.13.x)"
-- **Every route is documented**, not only the API: the HTML pages, `/heartbeat` (as `blog_router.-routes/1-fun-0-`) and `/robots.txt` with GET, POST, PUT, DELETE and PATCH, because static file routes are not skipped. Wildcard directory routes and status-code routes are left out.
-- **Every operation answers `200 Successful response`.** The 201 from `create`, the 204 from `delete` and all error responses are missing.
-- **One schema per route** serves as both request body and response, although the response has `id` and `inserted_at` and the request must not.
-- **Component schemas keep their `$schema` key**, which an OpenAPI 3.0 schema object does not allow; strict validators complain.
-- **GET routes cannot carry a schema.** Adding `json_schema` to a GET route for documentation makes `nova_json_schemas` try to validate a body that is not there, and the request crashes.
+```admonish note title="What the generator cannot know"
+- **Responses carry a status and a description, no body.** The spec does not say that `show` returns a tag, or which errors the security function (401, 403), `blog_require_json_plugin` (415) and the changeset (422) add. `json_schema` describes the request body only.
+- **GET routes cannot carry a schema.** Adding `json_schema` to a GET route makes `nova_json_schemas` try to validate a body that is not there, and the request crashes.
 ```
 
-Treat the generated file as an accurate inventory of routes and request bodies, and as a starting point for hand-written documentation.
+Treat the generated file as an accurate inventory of the API's routes and request bodies, and add hand-written documentation for the responses where clients need it.
 
 ## Serving the spec
 
-The blog publishes the API part of the spec at `/api/openapi.json`. `src/controllers/blog_api_docs_controller.erl` reads the generated file and keeps only the paths under `/api/`:
+The blog publishes the spec at `/api/openapi.json` with a static file route in the tags group shown in [the previous chapter](json-api.md#routes):
 
 ```erlang
--module(blog_api_docs_controller).
-
--export([openapi/1]).
-
-openapi(_Req) ->
-    {ok, Spec} = file:read_file(filename:join(code:priv_dir(blog), "openapi/openapi.json")),
-    #{~"paths" := Paths} = Decoded = json:decode(Spec),
-    {json, Decoded#{~"paths" := #{P => Ops || P := Ops <- Paths, is_api_path(P)}}}.
-
-is_api_path(<<"/api/", _/binary>>) -> true;
-is_api_path(_) -> false.
+{"/openapi.json", "openapi/openapi.json", #{mimetype => ~"application/json"}}
 ```
 
-The route is in the tags group shown in [the previous chapter](json-api.md#routes):
-
-```erlang
-{"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
-```
+Like `/robots.txt` in [Routing](../foundations/routing.md), the path is relative to the application's `priv` directory, and `mimetype` sets the `content-type`. The file is served as it was generated:
 
 ```shell
 curl -i localhost:8080/api/openapi.json
@@ -118,23 +95,27 @@ curl -i localhost:8080/api/openapi.json
 
 ```
 HTTP/1.1 200 OK
-content-length: 2983
+content-length: 6074
 content-type: application/json
 ...
 
-{"components":{"schemas":{"tag":{"$schema":"http://json-schema.org/draft-06/schema#",...}}},"info":{"title":"Blog API","version":"1.0.0"},"openapi":"3.0.3","paths":{"/api/openapi.json":{...},"/api/posts":{...},...}}
+{
+  "components": {
+    "schemas": {
+      "tag": {
+...
 ```
 
-The test `openapi_spec_lists_api_routes` in `blog_api_tags_SUITE` checks that the tags operations are there and nothing outside `/api/` is.
+The test `openapi_spec_documents_the_api` in `blog_api_tags_SUITE` fetches it and checks the tags operations and their responses, that the `tag` schema has no `$schema` key, and that nothing outside `/api/` is in it.
 
 The spec is a build artifact checked into the repository. Regenerate it with the command above whenever you change the API routes or schemas, and commit it with the change.
 
 ### Swagger UI
 
-The generated `swagger.html` would give you an interactive page, but it loads its code from a CDN, which the blog does not do (see [Security](../production/security.md)). If you want a browsable UI, download the `swagger-ui-dist` package, copy its files into a directory under `priv/` and write your own page that points at `/api/openapi.json`. The blog leaves that out to keep the repository small. Any OpenAPI viewer or client generator can read the served spec directly.
+The spec is all the blog serves. If you want a browsable UI, download the `swagger-ui-dist` package, copy its files into a directory under `priv/` and write your own page that points at `/api/openapi.json`; do not load Swagger UI from a CDN (see [Security](../production/security.md#no-third-party-scripts)). The blog leaves that out to keep the repository small. Any OpenAPI viewer or client generator can read the served spec directly.
 
 ```admonish warning title="rebar3 nova release"
-`rebar3 nova release` is meant to regenerate the spec and build a release in one go. In 0.13.4 it regenerates into the default `priv/assets/` (CDN page included) and then crashes inside rebar3 3.27 with `{case_clause,["prod"]}`. Build releases with `rebar3 as prod release` (see [Deployment](../production/deployment.md)) and regenerate the spec yourself.
+`rebar3 nova release` regenerates the spec and then builds a release with `rebar3 as prod release`. It regenerates with the defaults, though: every controller route, written to `priv/assets/openapi.json`, which the release then serves at `/assets/openapi.json`. Build releases with `rebar3 as prod release` (see [Deployment](../production/deployment.md)) and regenerate the spec yourself with the command above.
 ```
 
 ## Inspecting the API
@@ -143,26 +124,29 @@ The generated `swagger.html` would give you an interactive page, but it loads it
 
 ### Routes
 
-`rebar3 nova routes` shows every API group under the shared `/api` prefix: the posts API, the token routes from [Authentication](../auth-sessions/authentication.md#api-tokens) and the tags API (bindings are printed without the colon, so `/id` is `/:id`). The output is trimmed to the `/api` subtree:
+`rebar3 nova routes` lists every route, sorted by path. The output is trimmed to the `/api` routes: the posts API, the token routes from [Authentication](../auth-sessions/authentication.md#api-tokens), the tags API and the spec:
 
 ```
-     ├─  /api
-         ├─  GET /openapi.json (blog, blog_api_docs_controller:openapi/1)
-         ├─  POST /tags (blog, blog_tags_controller:create/1)
-         ├─  GET /tags (blog, blog_tags_controller:list/1)
-             └─  DELETE /id (blog, blog_tags_controller:delete/1)
-             └─  PUT /id (blog, blog_tags_controller:update/1)
-             └─  GET /id (blog, blog_tags_controller:show/1)
-         ├─  POST /tokens (blog, blog_tokens_controller:create/1)
-         ├─  DELETE /tokens (blog, blog_tokens_controller:delete/1)
-         └─  POST /posts (blog, blog_posts_controller:create/1)
-         └─  GET /posts (blog, blog_posts_controller:index/1)
-             └─  DELETE /id (blog, blog_posts_controller:delete/1)
-             └─  PUT /id (blog, blog_posts_controller:update/1)
-             └─  GET /id (blog, blog_posts_controller:show/1)
-                 ├─  PUT /tags (blog, blog_posts_controller:update_tags/1)
-                 └─  POST /comments (blog, blog_posts_controller:create_comment/1)
+...
+any      /api/openapi.json                        nova_file_controller:get_file/1
+get      /api/posts                               blog_posts_controller:index/1
+post     /api/posts                               blog_posts_controller:create/1
+delete   /api/posts/:id                           blog_posts_controller:delete/1
+get      /api/posts/:id                           blog_posts_controller:show/1
+put      /api/posts/:id                           blog_posts_controller:update/1
+post     /api/posts/:id/comments                  blog_posts_controller:create_comment/1
+put      /api/posts/:id/tags                      blog_posts_controller:update_tags/1
+get      /api/tags                                blog_tags_controller:list/1
+post     /api/tags                                blog_tags_controller:create/1
+delete   /api/tags/:id                            blog_tags_controller:delete/1
+get      /api/tags/:id                            blog_tags_controller:show/1
+put      /api/tags/:id                            blog_tags_controller:update/1
+delete   /api/tokens                              blog_tokens_controller:delete/1
+post     /api/tokens                              blog_tokens_controller:create/1
+...
 ```
+
+A static file route answers every method (`any`).
 
 ### Plugin chains
 
@@ -212,35 +196,39 @@ The generated `swagger.html` would give you an interactive page, but it loads it
     POST /tags -> blog_tags_controller:create
     PUT /tags/:id -> blog_tags_controller:update
     DELETE /tags/:id -> blog_tags_controller:delete
-    GET /openapi.json -> blog_api_docs_controller:openapi
+    STATIC /openapi.json -> openapi/openapi.json
 ```
-
-The command still stops with an error when it reaches the last group, as described in [Plugins](../foundations/plugins.md); everything before it prints first.
 
 ### Security audit
 
-`rebar3 nova audit` lists every write route without a security function. The output is trimmed to the API lines:
+`rebar3 nova audit` lists every write route without a security function as a warning, and every read route without one as information. The output is trimmed to the API lines:
 
 ```
+=== Security Audit ===
+
+  Audited routes(dev) of blog. Not covered: static files and error pages, arizona_nova routes (served before nova_router). nova_apps read from ./config/dev_sys.config.src.
+
   WARNINGS:
-    ...
-    POST /api/tokens (blog_tokens_controller) has no security
-    PUT /api/tags/{id} (blog_tags_controller) has no security
-    DELETE /api/tags/{id} (blog_tags_controller) has no security
     POST /api/tags (blog_tags_controller) has no security
+    DELETE /api/tags/{id} (blog_tags_controller) has no security
+    PUT /api/tags/{id} (blog_tags_controller) has no security
+    POST /api/tokens (blog_tokens_controller) has no security
     ...
+
   INFO:
     ...
-    GET /api/posts/{id} (blog_posts_controller) has no security
     GET /api/posts (blog_posts_controller) has no security
-    GET /api/tags/{id} (blog_tags_controller) has no security
+    GET /api/posts/{id} (blog_posts_controller) has no security
     GET /api/tags (blog_tags_controller) has no security
-    GET /api/openapi.json (blog_api_docs_controller) has no security
+    GET /api/tags/{id} (blog_tags_controller) has no security
     ...
-  Summary: 17 warning(s), 14 info(s)
+
+  Summary: 8 warning(s), 12 info(s)
 ```
 
 `POST /api/tokens` is open on purpose: it is how a client gets a token, and it is rate-limited. Reading posts and tags is meant to be public. The post writes already need a bearer token (Part III); the tag writes are the gap that remains, closed in [Security](../production/security.md#tag-writes-need-an-admin).
+
+The first line says what the audit did not look at. Static files and status pages have no security function to check, and Arizona's routes never reach Nova's router. `--env prod --config config/prod_sys.config.src` audits the routes the production config would compile (with `${VAR}` references filled in from the environment or their defaults), and `--strict` makes any warning an error, which is useful in CI once the remaining warnings are the intended ones.
 
 ### Doctor
 
@@ -248,51 +236,58 @@ The command still stops with an error when it reaches the last group, as describ
 
 ```
 ✅ Routes
-    ✓ 27 routes compiled
+    ✓ 42 routes compiled
     ...
-    ✓ POST /api/tags -> blog_tags_controller (callback fun)
-    ✓ GET /api/tags -> blog_tags_controller (callback fun)
-    ✓ DELETE /api/tags/{id} -> blog_tags_controller (callback fun)
-    ✓ PUT /api/tags/{id} -> blog_tags_controller (callback fun)
-    ✓ GET /api/tags/{id} -> blog_tags_controller (callback fun)
+    ✓ DELETE /api/tags/:id -> blog_tags_controller:delete/1
+    ✓ GET /api/tags/:id -> blog_tags_controller:show/1
+    ✓ PUT /api/tags/:id -> blog_tags_controller:update/1
+    ✓ GET /api/tags -> blog_tags_controller:list/1
+    ✓ POST /api/tags -> blog_tags_controller:create/1
     ...
 ```
 
+A route whose controller does not export the function is reported as an error.
+
 ### Configuration
 
-`rebar3 nova config` prints the `nova` section of the shell config (`config/dev_sys.config.src`):
+`rebar3 nova config` prints the Nova settings of the shell config (`config/dev_sys.config.src`), grouped by the application they are read from:
 
 ```
 === Nova Configuration ===
 
-  bootstrap_application     blog
-  environment               dev
-  cowboy_configuration      #{port => 8080}
-  plugins                   [{pre_request,nova_request_plugin,
-                                 #{decode_json_body => true,
-                                   read_urlencoded_body => true}}]
-  json_lib                  thoas (default)
-  use_stacktrace            true
-  dispatch_backend          persistent_term (default)
+  {nova, [...]}
+    bootstrap_application     blog
+    environment               dev
+    cowboy_configuration      #{port => 8080}
+    plugins                   [{pre_request,nova_request_plugin,
+                                   #{decode_json_body => true,
+                                     read_urlencoded_body => true}}]
+    use_stacktrace            true
+    render_error_pages        true (default)
+    use_strict_routing        false (default)
+    session_manager           nova_session_ets (default)
+    dispatch_backend          persistent_term (default)
+
+  {blog, [...]}
+    json_lib                  blog_json
+    use_sessions              true (default)
 ```
 
-```admonish note
-The command shows a fixed list of seven keys and reads them only from the `nova` section. `json_lib thoas (default)` is therefore wrong for the blog: Nova reads `json_lib` from the bootstrap application's environment, where the blog sets `{json_lib, blog_json}` (see [Plugins](../foundations/plugins.md)). Options such as `render_error_pages` ([Error Handling](error-handling.md#turning-error-pages-off)) are not shown at all.
-```
+`json_lib` and `use_sessions` are listed under `blog`, the bootstrap application, because that is where Nova reads them; the blog sets `{json_lib, blog_json}` (see [Plugins](../foundations/plugins.md)). Keys you did not set show their default. `render_error_pages` comes back in [Error Handling](error-handling.md#turning-error-pages-off).
 
 ## Command summary
 
 | Command | Use it to |
 |---|---|
-| `rebar3 nova gen_resource --name N` | Scaffold a controller and JSON schema and print route hints |
+| `rebar3 nova gen_resource --name N` | Scaffold a controller and JSON schema and print route group hints |
 | `rebar3 nova gen_controller --name N` | Scaffold a controller only |
-| `rebar3 nova gen_test --name N` | Scaffold a Common Test suite |
-| `rebar3 nova openapi -o PATH` | Write an OpenAPI 3.0.3 spec of all routes |
-| `rebar3 nova routes` | Show the routing tree |
+| `rebar3 nova gen_test --name N` | Scaffold a Common Test suite from the compiled routes |
+| `rebar3 nova openapi -o PATH --prefix P` | Write an OpenAPI 3.0.3 spec of the routes under `P` |
+| `rebar3 nova routes` | List every route with its handler |
 | `rebar3 nova middleware` | Show each group's plugin chain |
 | `rebar3 nova audit` | List routes without a security function |
 | `rebar3 nova doctor -v` | Check toolchain, config and routes |
-| `rebar3 nova config` | Show the `nova` config keys |
+| `rebar3 nova config` | Show the Nova settings by application |
 
 ---
 

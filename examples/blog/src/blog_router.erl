@@ -163,7 +163,7 @@ route_groups() ->
             routes => [
                 {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
                 {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}},
-                {"/openapi.json", fun blog_api_docs_controller:openapi/1, #{methods => [get]}}
+                {"/openapi.json", "openapi/openapi.json", #{mimetype => ~"application/json"}}
             ]
         },
         #{

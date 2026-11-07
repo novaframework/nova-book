@@ -62,7 +62,7 @@ content-type: application/json
 {"message":"undefined","status":"undefined","title":"undefined","stacktrace":[],"extra_msg":"undefined"}
 ```
 
-(`/api/crash` was a throwaway route to `blog_crash_demo_controller`, a copy of the unmodified `gen_resource` stub `list/1`, which crashes with `function_clause`.) A browser gets Nova's error page with an empty heading, and any other `accept` value, curl's default `*/*` included, an empty body.
+(`/api/crash` was a throwaway route to `blog_crash_demo_controller`, whose `list(#{req := _Req})` matches a key the request map does not have, so every call crashes with `function_clause`.) A browser gets Nova's error page with an empty heading, and any other `accept` value, curl's default `*/*` included, an empty body.
 
 ```admonish bug
 In Nova 0.18.1, `nova_error_controller:server_error/1` formats a stacktrace that `nova_handler` has already formatted, fails on every frame (logging "Could not format stacktrace line" each time) and ends up with an empty list. The crash payload also has no title or message, so every field renders as `"undefined"`. It only answers JSON when `accept` is exactly `application/json`.

@@ -30,7 +30,7 @@ A release is a self-contained directory with your applications, their dependenci
 `{mode, prod}` includes ERTS, strips debug info and copies files instead of symlinking them. `{blog, git}` takes the release version from the latest git tag; with no tags (or no `.git` directory, as in a Docker build) it falls back to `0.0.0`. Tag your releases.
 
 ```admonish bug title="rebar3 nova release"
-`rebar3 nova release` (rebar3_nova 0.13.4) first writes `priv/assets/openapi.json` and a Swagger page that loads its scripts from a CDN, then crashes with `{case_clause,["prod"]}` inside rebar3 3.27. Use relx directly, as below.
+`rebar3 nova release` (rebar3_nova 0.14.0) regenerates the OpenAPI spec and then runs `rebar3 as prod release`. Two things make it the wrong tool for the blog. It writes the spec with the defaults, every controller route into `priv/assets/openapi.json`, which the release then serves at `/assets/openapi.json`. And the release it builds has none of the compiled ErlyDTL templates (`rebar3` warns that `blog_view:forbidden/0 calls undefined function blog_forbidden_dtl:render/1`), so every HTML page fails. Use relx directly, as below.
 ```
 
 ## Building
@@ -256,7 +256,7 @@ docker-compose.yml
 Every line is there for a reason:
 
 - **OTP 29.** Arizona requires OTP 29, so the builder is `erlang:29.1.2-slim`, the same OTP release `.tool-versions` pins for local work.
-- **git in the builder.** `rebar3_nova` and `rebar3_erlydtl_plugin` are project plugins fetched from git, and the slim image has no git.
+- **git in the builder.** `rebar3_erlydtl_plugin` is a project plugin fetched from git, and the slim image has no git.
 - **Dependencies first.** Copying `rebar.config` and `rebar.lock` alone and compiling the dependencies gives Docker a cached layer that survives changes to `src/`.
 - **Same Debian on both sides.** `erlang:29.1.2-slim` is Debian trixie; so is the runtime. ERTS from the builder is linked against trixie's glibc 2.41 and OpenSSL 3. On `debian:bookworm-slim` (glibc 2.36) the VM does not even start: `beam.smp: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found`. `ldd` on `beam.smp` and on `crypto.so` lists what the runtime needs: `libtinfo6`, `libstdc++6` and `libssl3t64`, all present in `trixie-slim` today and named here so a base image change cannot silently drop them. `libsctp1` only silences a `Failed open sctp dynamic library` warning at every boot.
 - **ca-certificates.** `debian:trixie-slim` has no CA bundle. Without it every outgoing TLS connection that verifies the peer (the OTLP exporter, an email API, Postgres over TLS) fails, and `public_key:cacerts_get/0` raises instead of returning a list:

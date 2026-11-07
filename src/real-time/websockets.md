@@ -63,9 +63,9 @@ A WebSocket route names the handler module (an atom, not a fun) and sets `protoc
 `rebar3 nova routes` shows them (Nova's WebSocket wrapper, `nova_ws_handler`, is what Cowboy actually calls):
 
 ```
-     ├─  /ws
-         ├─  _ /notifications (blog, nova_ws_handler:init/1)
-         └─  _ /echo (blog, nova_ws_handler:init/1)
+...
+any      /ws/echo                                 nova_ws_handler (cowboy handler)
+any      /ws/notifications                        nova_ws_handler (cowboy handler)
 ```
 
 Restart the node and try it from the browser console on any blog page:
