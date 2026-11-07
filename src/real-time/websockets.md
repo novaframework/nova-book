@@ -132,7 +132,7 @@ Common Test can talk to the running node with [gun](https://github.com/ninenines
     ...
     {deps, [
         {meck, "1.2.0"},
-        {nova_test, "~> 0.2"},
+        {nova_test, "~> 0.3"},
         {gun, "2.5.0"}
     ]},
     ...

@@ -1,6 +1,6 @@
 # Cheat Sheet
 
-Quick reference for the APIs this book uses, at the versions it was tested with: Nova 0.18.1, Kura 2.25 with kura_postgres 1.1, nova_auth 0.2, Arizona 0.4 with arizona_nova 0.1, Shigoto 1.9, Hikyaku 0.2 and nova_test 0.2. Each section links to the chapter that explains it.
+Quick reference for the APIs this book uses, at the versions it was tested with: Nova 0.18.1, Kura 2.25 with kura_postgres 1.1, nova_auth 0.2, Arizona 0.4 with arizona_nova 0.1, Shigoto 1.9, Hikyaku 0.2 and nova_test 0.3. Each section links to the chapter that explains it.
 
 ## Routing
 
@@ -516,10 +516,11 @@ Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `
 | Tool | Calls |
 |---|---|
 | EUnit | `*_test()`, `*_test_()` generators, `?assert`, `?assertEqual`, `?assertMatch`, `?_assert...`, `{setup, S, C, Tests}`, `{foreach, S, C, Tests}` |
-| `nova_test_req` | `new(Method, Path)`, `with_bindings/2`, `with_json/2`, `with_header/3`, `with_query/2` (sets `qs` only), `with_body/2`, `with_auth_data/2`, `with_peer/2` |
-| `nova_test.hrl` (unit) | `?assertJsonResponse(Pattern, R)`, `?assertJsonResponse(Status, Pattern, R)`, `?assertStatusResponse/2`, `?assertRedirect/2`, `?assertOkResponse/2` |
-| `nova_test` (HTTP) | `start(App, Config)`, `stop/1`, `get/2,3`, `post/2,3`, `put/3`, `patch/3`, `delete/2,3`, `request/4`; opts `json`, `body`, `content_type`, `headers` |
-| `nova_test.hrl` (HTTP) | `?assertStatus/2`, `?assertJson/2`, `?assertBody/2`, `?assertHeader/3` |
+| `nova_test_req` | `new(Method, Path)`, `with_bindings/2`, `with_json/2`, `with_header/3`, `with_query/2` (`qs` and `parsed_qs`), `with_form/2` (`body` and `params`), `with_body/2`, `with_auth_data/2`, `with_peer/2` |
+| `nova_test.hrl` (unit) | `?assertJsonResponse(Pattern, R)`, `?assertJsonResponse(Status, Pattern, R)`, `?assertStatusResponse/2`, `?assertRedirect/2`, `?assertOkResponse/2`; each macro has a `?_assert...` generator version |
+| `nova_test` (HTTP) | `start(App, Config)` (raises `nova_test_listener_not_running`), `stop/1` (stops what `start/2` started), `get/2,3`, `post/2,3`, `put/3`, `patch/3`, `delete/2,3`, `request/4`; opts `json`, `form`, `body`, `content_type`, `headers`; paths start with `/` |
+| `nova_test` (sessions) | `session(Config)`, `csrf_token(Resp)`, `cookie(Name, Config)`, `set_cookie(Name, Value, Config)`, `set_cookies(Resp)` |
+| `nova_test.hrl` (HTTP) | `?assertStatus/2`, `?assertJson/2`, `?assertBody/2`, `?assertHeader/3`, `?assertCookie/3` |
 | `kura_sandbox` | `start()`, `checkout(Repo)`, `checkout(Repo, #{shared => true})`, `allow(Repo, Owner, Pid)`, `checkin(Repo)` |
 | `shigoto_testing` | `shigoto:perform_job(Worker, Args)`, `perform_job/3`, `assert_enqueued/1`, `refute_enqueued/1`, `all_enqueued/0,1`, `reset/0`; modes `{shigoto, [{testing, manual \| inline}, {testing_confirm_no_persistence, true}]}` |
 | `meck` | `new/1`, `expect/3,4`, `called/3`, `capture/5`, `validate/1`, `unload/1` |
