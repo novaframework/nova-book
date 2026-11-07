@@ -1,6 +1,6 @@
 -module(blog_auth_session_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
 -export([
@@ -15,7 +15,7 @@
     expired_session_token_logs_out/1
 ]).
 
--define(PASSWORD, "correct horse battery").
+-define(PASSWORD, ~"correct horse battery").
 
 all() ->
     [
@@ -31,15 +31,14 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 
 end_per_testcase(_Case, _Config) ->
@@ -51,20 +50,25 @@ nova_default_cookie_has_no_flags(_Config) ->
     #{resp_cookies := #{~"session_id" := Cookie}} = element(3, State),
     [<<"session_id=", _/binary>>] = binary:split(iolist_to_binary(Cookie), ~";", [global]).
 
-first_visit_gets_hardened_cookie(_Config) ->
-    {200, Headers, _, Jar} = blog_web:get(#{}, "/posts"),
-    [Cookie] = blog_web:set_cookie("session_id", Headers),
-    #{"session_id" := Id} = Jar,
-    "session_id=" ++ Rest = Cookie,
-    [Id | Attributes] = [string:trim(A) || A <- string:split(Rest, ";", all)],
-    ?assertEqual(["HttpOnly", "Path=/", "SameSite=Lax", "Secure"], lists:sort(Attributes)),
-    ?assertEqual(43, length(Id)).
+first_visit_gets_hardened_cookie(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Resp} = nova_test:get("/posts", Session),
+    ?assertStatus(200, Resp),
+    [#{value := Id, attributes := Attributes}] =
+        [Cookie || #{name := ~"session_id"} = Cookie <- nova_test:set_cookies(Resp)],
+    ?assertCookie(~"session_id", Id, Session),
+    ?assertEqual(
+        [{~"httponly", ~""}, {~"path", ~"/"}, {~"samesite", ~"Lax"}, {~"secure", ~""}],
+        lists:sort(Attributes)
+    ),
+    ?assertEqual(43, byte_size(Id)).
 
-returning_visitor_keeps_session(_Config) ->
-    {200, _, First, Jar} = blog_web:get(#{}, "/login"),
-    {200, Headers, Second, Jar} = blog_web:get(Jar, "/login"),
-    [] = blog_web:set_cookie("session_id", Headers),
-    ?assertEqual(blog_web:csrf_token(First), blog_web:csrf_token(Second)).
+returning_visitor_keeps_session(Config) ->
+    Session = nova_test:session(Config),
+    {ok, First} = nova_test:get("/login", Session),
+    {ok, Second} = nova_test:get("/login", Session),
+    [] = [Cookie || #{name := ~"session_id"} = Cookie <- nova_test:set_cookies(Second)],
+    ?assertEqual(nova_test:csrf_token(First), nova_test:csrf_token(Second)).
 
 session_api_round_trip(_Config) ->
     Req = #{nova_session_id => blog_session:new_id()},
@@ -80,51 +84,70 @@ session_api_round_trip(_Config) ->
     ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Expired), ~"Max-Age=0")),
     {error, session_id_not_set} = nova_session:set(#{headers => #{}}, ~"theme", ~"dark").
 
-flash_is_shown_once(_Config) ->
-    {302, _, _, Jar} = blog_web:get(#{}, "/posts/new"),
-    {200, _, Login, Jar} = blog_web:get(Jar, "/login"),
-    ?assertNotEqual(nomatch, binary:match(Login, ~"Please log in first.")),
-    {200, _, Again, Jar} = blog_web:get(Jar, "/login"),
-    ?assertEqual(nomatch, binary:match(Again, ~"Please log in first.")).
+flash_is_shown_once(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Redirect} = nova_test:get("/posts/new", Session),
+    ?assertStatus(302, Redirect),
+    Id = nova_test:cookie(~"session_id", Session),
+    {ok, Login} = nova_test:get("/login", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Login), ~"Please log in first.")),
+    {ok, Again} = nova_test:get("/login", Session),
+    ?assertEqual(nomatch, binary:match(nova_test:body(Again), ~"Please log in first.")),
+    ?assertCookie(~"session_id", Id, Session).
 
-login_replaces_attacker_chosen_session(_Config) ->
-    Planted = #{"session_id" => "attacker-knows-this"},
-    {200, _, Form, Planted} = blog_web:get(Planted, "/login"),
-    {302, _, _, Jar} = blog_web:post_form(Planted, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", ?PASSWORD}
-    ]),
-    ?assertNotEqual("attacker-knows-this", maps:get("session_id", Jar)),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new"),
-    {302, _, _, _} = blog_web:get(Planted, "/posts/new").
+login_replaces_attacker_chosen_session(Config) ->
+    Planted = nova_test:set_cookie(~"session_id", ~"attacker-knows-this", Config),
+    Session = nova_test:session(Planted),
+    {ok, Form} = nova_test:get("/login", Session),
+    ?assertCookie(~"session_id", ~"attacker-knows-this", Session),
+    {ok, Login} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Login),
+    ?assertNotEqual(~"attacker-knows-this", nova_test:cookie(~"session_id", Session)),
+    {ok, Mine} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, Mine),
+    {ok, Attacker} = nova_test:get("/posts/new", Planted),
+    ?assertStatus(302, Attacker).
 
-logout_rotates_session(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Page, _} = blog_web:get(Jar, "/posts"),
-    {302, Headers, _, Jar1} =
-        blog_web:post_form(Jar, "/logout", [{"_csrf_token", blog_web:csrf_token(Page)}]),
-    [Cookie] = blog_web:set_cookie("session_id", Headers),
-    ?assertNotEqual(nomatch, string:find(Cookie, "HttpOnly")),
-    ?assertNotEqual(maps:get("session_id", Jar), maps:get("session_id", Jar1)).
+logout_rotates_session(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    Before = nova_test:cookie(~"session_id", Session),
+    {ok, Page} = nova_test:get("/posts", Session),
+    {ok, Logout} = nova_test:post(
+        "/logout", #{form => [{~"_csrf_token", nova_test:csrf_token(Page)}]}, Session
+    ),
+    ?assertStatus(302, Logout),
+    [#{attributes := Attributes}] =
+        [Cookie || #{name := ~"session_id"} = Cookie <- nova_test:set_cookies(Logout)],
+    ?assert(lists:keymember(~"httponly", 1, Attributes)),
+    ?assertNotEqual(Before, nova_test:cookie(~"session_id", Session)).
 
 password_change_ends_other_sessions(Config) ->
-    Laptop = blog_web:log_in("alice@example.com", ?PASSWORD),
-    Phone = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, _, _} = blog_web:get(Phone, "/posts/new"),
+    Laptop = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    Phone = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, #{status := 200}} = nova_test:get("/posts/new", Phone),
     {ok, _} = nova_auth_accounts:change_password(
-        blog_auth, ?config(alice, Config), ~"correct horse battery", #{
+        blog_auth, ?config(alice, Config), ?PASSWORD, #{
             ~"password" => ~"an even better passphrase",
             ~"password_confirmation" => ~"an even better passphrase"
         }
     ),
-    {302, _, _, _} = blog_web:get(Laptop, "/posts/new"),
-    {302, _, _, _} = blog_web:get(Phone, "/posts/new"),
-    Jar = blog_web:log_in("alice@example.com", "an even better passphrase"),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new").
+    {ok, #{status := 302}} = nova_test:get("/posts/new", Laptop),
+    {ok, #{status := 302}} = nova_test:get("/posts/new", Phone),
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ~"an even better passphrase"),
+    {ok, #{status := 200}} = nova_test:get("/posts/new", Session).
 
-expired_session_token_logs_out(_Config) ->
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
+expired_session_token_logs_out(Config) ->
+    Session = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
     {ok, [Token]} = blog_repo:all(kura_query:from(blog_user_token)),
     Fifteen = calendar:gregorian_seconds_to_datetime(
         calendar:datetime_to_gregorian_seconds(calendar:universal_time()) - 15 * 86400
@@ -132,8 +155,9 @@ expired_session_token_logs_out(_Config) ->
     {ok, _} = blog_repo:update(
         kura_changeset:cast(blog_user_token, Token, #{inserted_at => Fifteen}, [inserted_at])
     ),
-    Session = #{nova_session_id => list_to_binary(maps:get("session_id", Jar))},
-    {ok, #{id := _}} = nova_auth_actor:fetch(Session),
-    {302, Headers, _, _} = blog_web:get(Jar, "/posts/new"),
-    "/login" = blog_web:header("location", Headers),
-    {error, not_found} = nova_auth_actor:fetch(Session).
+    Req = #{nova_session_id => nova_test:cookie(~"session_id", Session)},
+    {ok, #{id := _}} = nova_auth_actor:fetch(Req),
+    {ok, Resp} = nova_test:get("/posts/new", Session),
+    ?assertStatus(302, Resp),
+    ?assertHeader("location", "/login", Resp),
+    {error, not_found} = nova_auth_actor:fetch(Req).

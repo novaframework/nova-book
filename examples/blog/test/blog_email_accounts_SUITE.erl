@@ -1,6 +1,6 @@
 -module(blog_email_accounts_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 -include_lib("hikyaku/include/hikyaku.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
@@ -26,8 +26,7 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     application:stop(blog).
@@ -35,7 +34,7 @@ end_per_suite(_Config) ->
 init_per_testcase(_Case, Config) ->
     ok = blog_jobs_fixtures:reset_jobs(),
     blog_jobs_fixtures:capture_mail(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     blog_data_fixtures:checkout(),
     [{alice, blog_data_fixtures:user(~"alice")} | Config].
 
@@ -43,15 +42,22 @@ end_per_testcase(_Case, _Config) ->
     blog_jobs_fixtures:testing(disabled),
     blog_data_fixtures:checkin().
 
-registration_mails_a_confirmation_link(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/register"),
-    {302, _, _, Jar1} = blog_web:post_form(Jar, "/register", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "carol@example.com"},
-        {"username", "carol"},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ?PASSWORD}
-    ]),
+registration_mails_a_confirmation_link(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/register", Session),
+    {ok, #{status := 302}} = nova_test:post(
+        "/register",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"carol@example.com"},
+                {~"username", ~"carol"},
+                {~"password", ?PASSWORD},
+                {~"password_confirmation", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
     {ok, #{id := CarolId, confirmed_at := undefined}} =
         blog_repo:get_by(blog_user, [{email, ~"carol@example.com"}]),
     shigoto_testing:assert_enqueued(#{
@@ -65,23 +71,33 @@ registration_mails_a_confirmation_link(_Config) ->
         text_body = Text
     } = blog_jobs_fixtures:receive_email(),
     "/confirm?" ++ _ = Link = link_in(Text),
-    {200, Headers, Page, Jar2} = blog_web:get(Jar1, Link),
-    "no-referrer" = blog_web:header("referrer-policy", Headers),
-    Fields = [{"_csrf_token", blog_web:csrf_token(Page)}, {"token", token_in(Link)}],
-    {302, _, _, Jar3} = blog_web:post_form(Jar2, "/confirm", Fields),
+    {ok, Page} = nova_test:get(Link, Session),
+    ?assertHeader("referrer-policy", "no-referrer", Page),
+    Confirm = #{form => [{~"_csrf_token", nova_test:csrf_token(Page)}, {~"token", token_in(Link)}]},
+    {ok, #{status := 302}} = nova_test:post("/confirm", Confirm, Session),
     {ok, #{confirmed_at := {{_, _, _}, {_, _, _}}}} = blog_repo:get(blog_user, CarolId),
-    {302, _, _, Jar4} = blog_web:post_form(Jar3, "/confirm", Fields),
-    {200, _, Posts, _} = blog_web:get(Jar4, "/posts"),
-    ?assertNotEqual(nomatch, binary:match(Posts, ~"That link is invalid or has expired.")).
+    {ok, #{status := 302}} = nova_test:post("/confirm", Confirm, Session),
+    {ok, Posts} = nova_test:get("/posts", Session),
+    ?assertNotEqual(
+        nomatch, binary:match(nova_test:body(Posts), ~"That link is invalid or has expired.")
+    ).
 
 reset_link_changes_the_password(Config) ->
     #{id := AliceId} = ?config(alice, Config),
-    {ok, Session} = blog_accounts:issue_token(?config(alice, Config)),
-    {200, _, Form, Jar} = blog_web:get(#{}, "/password/forgot"),
-    {302, Headers, _, Jar1} = blog_web:post_form(Jar, "/password/forgot", [
-        {"_csrf_token", blog_web:csrf_token(Form)}, {"email", " Alice@Example.com "}
-    ]),
-    "/login" = blog_web:header("location", Headers),
+    {ok, ApiToken} = blog_accounts:issue_token(?config(alice, Config)),
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/password/forgot", Session),
+    {ok, Forgot} = nova_test:post(
+        "/password/forgot",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)}, {~"email", ~" Alice@Example.com "}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Forgot),
+    ?assertHeader("location", "/login", Forgot),
     shigoto_testing:assert_enqueued(#{
         worker => blog_account_email_worker,
         args => #{~"email" => ~"reset", ~"user_id" => AliceId}
@@ -90,37 +106,53 @@ reset_link_changes_the_password(Config) ->
     #hikyaku_email{subject = ~"Reset your password", text_body = Text} =
         blog_jobs_fixtures:receive_email(),
     "/password/reset?" ++ _ = Link = link_in(Text),
-    {200, _, Page, Jar2} = blog_web:get(Jar1, Link),
-    Csrf = blog_web:csrf_token(Page),
+    {ok, Page} = nova_test:get(Link, Session),
+    Csrf = nova_test:csrf_token(Page),
     Token = token_in(Link),
-    {422, _, Mismatch, Jar3} = blog_web:post_form(Jar2, "/password/reset", [
-        {"_csrf_token", Csrf},
-        {"token", Token},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ~"something else entirely"}
-    ]),
-    ?assertNotEqual(nomatch, binary:match(Mismatch, ~"does not match")),
-    Reset = [
-        {"_csrf_token", Csrf},
-        {"token", Token},
-        {"password", ?PASSWORD},
-        {"password_confirmation", ?PASSWORD}
+    Mismatch = [
+        {~"_csrf_token", Csrf},
+        {~"token", Token},
+        {~"password", ?PASSWORD},
+        {~"password_confirmation", ~"something else entirely"}
     ],
-    {302, Done, _, Jar4} = blog_web:post_form(Jar3, "/password/reset", Reset),
-    "/login" = blog_web:header("location", Done),
+    {ok, Rejected} = nova_test:post("/password/reset", #{form => Mismatch}, Session),
+    ?assertStatus(422, Rejected),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Rejected), ~"does not match")),
+    Reset = #{
+        form => [
+            {~"_csrf_token", Csrf},
+            {~"token", Token},
+            {~"password", ?PASSWORD},
+            {~"password_confirmation", ?PASSWORD}
+        ]
+    },
+    {ok, Done} = nova_test:post("/password/reset", Reset, Session),
+    ?assertStatus(302, Done),
+    ?assertHeader("location", "/login", Done),
     {ok, #{id := AliceId}} = blog_accounts:authenticate(~"alice@example.com", ?PASSWORD),
-    {error, not_found} = blog_accounts:user_for_token(Session),
-    {302, Again, _, _} = blog_web:post_form(Jar4, "/password/reset", Reset),
-    "/password/forgot" = blog_web:header("location", Again).
+    {error, not_found} = blog_accounts:user_for_token(ApiToken),
+    {ok, Again} = nova_test:post("/password/reset", Reset, Session),
+    ?assertStatus(302, Again),
+    ?assertHeader("location", "/password/forgot", Again).
 
-unknown_email_gets_the_same_answer(_Config) ->
-    {200, _, Form, Jar} = blog_web:get(#{}, "/password/forgot"),
-    {302, Headers, _, Jar1} = blog_web:post_form(Jar, "/password/forgot", [
-        {"_csrf_token", blog_web:csrf_token(Form)}, {"email", "nobody@example.com"}
-    ]),
-    "/login" = blog_web:header("location", Headers),
-    {200, _, Login, _} = blog_web:get(Jar1, "/login"),
-    ?assertNotEqual(nomatch, binary:match(Login, ~"If that address has an account")),
+unknown_email_gets_the_same_answer(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Form} = nova_test:get("/password/forgot", Session),
+    {ok, Forgot} = nova_test:post(
+        "/password/forgot",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)}, {~"email", ~"nobody@example.com"}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Forgot),
+    ?assertHeader("location", "/login", Forgot),
+    {ok, Login} = nova_test:get("/login", Session),
+    ?assertNotEqual(
+        nomatch, binary:match(nova_test:body(Login), ~"If that address has an account")
+    ),
     shigoto_testing:refute_enqueued(#{worker => blog_account_email_worker}).
 
 one_reset_email_per_five_minutes(Config) ->

@@ -1,6 +1,6 @@
 -module(blog_auth_policy_SUITE).
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
+-include_lib("nova_test/include/nova_test.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
 -export([
@@ -15,7 +15,7 @@
     audit_log_records_the_actor/1
 ]).
 
--define(PASSWORD, "correct horse battery").
+-define(PASSWORD, ~"correct horse battery").
 
 all() ->
     [
@@ -31,15 +31,14 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    Config.
+    blog_data_fixtures:start(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_Case, Config) ->
     blog_data_fixtures:checkout(),
-    blog_web:reset_rate_limit(),
+    blog_data_fixtures:reset_rate_limit(),
     Alice = blog_data_fixtures:user(~"alice"),
     Bob = blog_data_fixtures:user(~"bob"),
     {ok, Admin} = blog_repo:update(
@@ -95,47 +94,54 @@ api_admin_can_change_any_post(Config) ->
 html_author_cannot_edit_others_posts(Config) ->
     #{id := Id} = ?config(post, Config),
     Path = "/posts/" ++ integer_to_list(Id),
-    Jar = blog_web:log_in("bob@example.com", ?PASSWORD),
-    {200, _, Show, _} = blog_web:get(Jar, Path),
-    ?assertEqual(nomatch, binary:match(Show, ~"/edit\"")),
-    {403, Headers, Body, _} = blog_web:get(Jar, Path ++ "/edit"),
-    "text/html" = blog_web:header("content-type", Headers),
-    ?assertNotEqual(nomatch, binary:match(Body, ~"<h1>Forbidden</h1>")),
-    Token = blog_web:csrf_token(Show),
-    {403, _, _, _} = blog_web:post_form(Jar, Path ++ "/delete", [{"_csrf_token", Token}]),
-    {403, _, _, _} = blog_web:post_form(Jar, Path, [{"_csrf_token", Token}, {"title", "Mine now"}]),
+    Bob = blog_data_fixtures:log_in(Config, ~"bob@example.com", ?PASSWORD),
+    {ok, Show} = nova_test:get(Path, Bob),
+    ?assertEqual(nomatch, binary:match(nova_test:body(Show), ~"/edit\"")),
+    {ok, Edit} = nova_test:get(Path ++ "/edit", Bob),
+    ?assertStatus(403, Edit),
+    ?assertHeader("content-type", "text/html", Edit),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Edit), ~"<h1>Forbidden</h1>")),
+    Token = nova_test:csrf_token(Show),
+    {ok, Delete} = nova_test:post(Path ++ "/delete", #{form => [{~"_csrf_token", Token}]}, Bob),
+    ?assertStatus(403, Delete),
+    Update = #{form => [{~"_csrf_token", Token}, {~"title", ~"Mine now"}]},
+    {ok, Updated} = nova_test:post(Path, Update, Bob),
+    ?assertStatus(403, Updated),
     {ok, #{title := ~"Alice writes", deleted_at := undefined}} = blog_repo:get(blog_post, Id).
 
 html_owner_can_edit_and_delete(Config) ->
     #{id := Id} = ?config(post, Config),
     Path = "/posts/" ++ integer_to_list(Id),
-    Jar = blog_web:log_in("alice@example.com", ?PASSWORD),
-    {200, _, Show, _} = blog_web:get(Jar, Path),
+    Alice = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, Show} = nova_test:get(Path, Alice),
     ?assertNotEqual(
-        nomatch, binary:match(Show, <<"href=\"", (list_to_binary(Path))/binary, "/edit\"">>)
+        nomatch,
+        binary:match(nova_test:body(Show), <<"href=\"", (list_to_binary(Path))/binary, "/edit\"">>)
     ),
-    {200, _, _, _} = blog_web:get(Jar, Path ++ "/edit"),
-    {302, _, _, _} = blog_web:post_form(Jar, Path ++ "/delete", [
-        {"_csrf_token", blog_web:csrf_token(Show)}
-    ]),
-    {404, _, _, _} = blog_web:get(Jar, Path).
+    {ok, #{status := 200}} = nova_test:get(Path ++ "/edit", Alice),
+    {ok, #{status := 302}} = nova_test:post(
+        Path ++ "/delete", #{form => [{~"_csrf_token", nova_test:csrf_token(Show)}]}, Alice
+    ),
+    {ok, #{status := 404}} = nova_test:get(Path, Alice).
 
 drafts_are_visible_to_owner_only(Config) ->
     #{id := Id} = blog_data_fixtures:post(?config(alice, Config), #{~"title" => ~"Secret draft"}),
     Path = "/posts/" ++ integer_to_list(Id),
-    {404, _, _, _} = blog_web:get(#{}, Path),
-    {404, _, _, _} = blog_web:get(blog_web:log_in("bob@example.com", ?PASSWORD), Path),
-    {200, _, Body, _} = blog_web:get(blog_web:log_in("alice@example.com", ?PASSWORD), Path),
+    LogIn = fun(Email) -> blog_data_fixtures:log_in(Config, Email, ?PASSWORD) end,
+    {ok, #{status := 404}} = nova_test:get(Path, Config),
+    {ok, #{status := 404}} = nova_test:get(Path, LogIn(~"bob@example.com")),
+    {ok, #{status := 200, body := Body}} = nova_test:get(Path, LogIn(~"alice@example.com")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<span class=\"badge\">draft</span>")),
-    {200, _, _, _} = blog_web:get(blog_web:log_in("carol@example.com", ?PASSWORD), Path).
+    {ok, #{status := 200}} = nova_test:get(Path, LogIn(~"carol@example.com")).
 
-admin_pages_need_admin_role(_Config) ->
-    {302, Headers, _, _} = blog_web:get(#{}, "/admin/users"),
-    "/login" = blog_web:header("location", Headers),
-    {403, _, _, _} = blog_web:get(blog_web:log_in("alice@example.com", ?PASSWORD), "/admin/users"),
-    {200, _, Body, _} = blog_web:get(
-        blog_web:log_in("carol@example.com", ?PASSWORD), "/admin/users"
-    ),
+admin_pages_need_admin_role(Config) ->
+    {ok, Anonymous} = nova_test:get("/admin/users", Config),
+    ?assertStatus(302, Anonymous),
+    ?assertHeader("location", "/login", Anonymous),
+    Alice = blog_data_fixtures:log_in(Config, ~"alice@example.com", ?PASSWORD),
+    {ok, #{status := 403}} = nova_test:get("/admin/users", Alice),
+    Carol = blog_data_fixtures:log_in(Config, ~"carol@example.com", ?PASSWORD),
+    {ok, #{status := 200, body := Body}} = nova_test:get("/admin/users", Carol),
     ?assertNotEqual(nomatch, binary:match(Body, ~"<td>bob@example.com</td>")),
     ?assertNotEqual(nomatch, binary:match(Body, ~"href=\"/admin/users\"")).
 

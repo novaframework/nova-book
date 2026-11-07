@@ -176,21 +176,25 @@ render_post(Req, Actor, Post) ->
     blog_view:render(Req, blog_post_show, Vars).
 ```
 
-Hiding a button is a courtesy, not a control. The test checks both: Bob sees no Edit link on Alice's post, and a hand-made request is refused anyway.
+Hiding a button is a courtesy, not a control. The test checks both: Bob sees no Edit link on Alice's post, and a hand-made request is refused anyway. `blog_data_fixtures:log_in/3` logs in through the form and returns a `nova_test` session, a client that keeps its cookies ([Authentication](authentication.md#testing)):
 
 ```erlang
 html_author_cannot_edit_others_posts(Config) ->
     #{id := Id} = ?config(post, Config),
     Path = "/posts/" ++ integer_to_list(Id),
-    Jar = blog_web:log_in("bob@example.com", ?PASSWORD),
-    {200, _, Show, _} = blog_web:get(Jar, Path),
-    ?assertEqual(nomatch, binary:match(Show, ~"/edit\"")),
-    {403, Headers, Body, _} = blog_web:get(Jar, Path ++ "/edit"),
-    "text/html" = blog_web:header("content-type", Headers),
-    ?assertNotEqual(nomatch, binary:match(Body, ~"<h1>Forbidden</h1>")),
-    Token = blog_web:csrf_token(Show),
-    {403, _, _, _} = blog_web:post_form(Jar, Path ++ "/delete", [{"_csrf_token", Token}]),
-    {403, _, _, _} = blog_web:post_form(Jar, Path, [{"_csrf_token", Token}, {"title", "Mine now"}]),
+    Bob = blog_data_fixtures:log_in(Config, ~"bob@example.com", ?PASSWORD),
+    {ok, Show} = nova_test:get(Path, Bob),
+    ?assertEqual(nomatch, binary:match(nova_test:body(Show), ~"/edit\"")),
+    {ok, Edit} = nova_test:get(Path ++ "/edit", Bob),
+    ?assertStatus(403, Edit),
+    ?assertHeader("content-type", "text/html", Edit),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Edit), ~"<h1>Forbidden</h1>")),
+    Token = nova_test:csrf_token(Show),
+    {ok, Delete} = nova_test:post(Path ++ "/delete", #{form => [{~"_csrf_token", Token}]}, Bob),
+    ?assertStatus(403, Delete),
+    Update = #{form => [{~"_csrf_token", Token}, {~"title", ~"Mine now"}]},
+    {ok, Updated} = nova_test:post(Path, Update, Bob),
+    ?assertStatus(403, Updated),
     {ok, #{title := ~"Alice writes", deleted_at := undefined}} = blog_repo:get(blog_post, Id).
 ```
 

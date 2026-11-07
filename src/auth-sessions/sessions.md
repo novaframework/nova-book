@@ -189,20 +189,31 @@ renew(Req) ->
 `nova_session:delete/1` drops the old data. The new ID goes into the request map, where `nova_session` looks first, so later `set/3` calls in the same request write to the new session, and the new cookie replaces the expired one `delete/1` queued. The [Authentication](authentication.md) chapter calls `renew/1` from `log_in/2` and `log_out/1`. The test plants a cookie, logs in through it, and checks the planted ID is worthless afterwards:
 
 ```erlang
-login_replaces_attacker_chosen_session(_Config) ->
-    Planted = #{"session_id" => "attacker-knows-this"},
-    {200, _, Form, Planted} = blog_web:get(Planted, "/login"),
-    {302, _, _, Jar} = blog_web:post_form(Planted, "/login", [
-        {"_csrf_token", blog_web:csrf_token(Form)},
-        {"email", "alice@example.com"},
-        {"password", ?PASSWORD}
-    ]),
-    ?assertNotEqual("attacker-knows-this", maps:get("session_id", Jar)),
-    {200, _, _, _} = blog_web:get(Jar, "/posts/new"),
-    {302, _, _, _} = blog_web:get(Planted, "/posts/new").
+login_replaces_attacker_chosen_session(Config) ->
+    Planted = nova_test:set_cookie(~"session_id", ~"attacker-knows-this", Config),
+    Session = nova_test:session(Planted),
+    {ok, Form} = nova_test:get("/login", Session),
+    ?assertCookie(~"session_id", ~"attacker-knows-this", Session),
+    {ok, Login} = nova_test:post(
+        "/login",
+        #{
+            form => [
+                {~"_csrf_token", nova_test:csrf_token(Form)},
+                {~"email", ~"alice@example.com"},
+                {~"password", ?PASSWORD}
+            ]
+        },
+        Session
+    ),
+    ?assertStatus(302, Login),
+    ?assertNotEqual(~"attacker-knows-this", nova_test:cookie(~"session_id", Session)),
+    {ok, Mine} = nova_test:get("/posts/new", Session),
+    ?assertStatus(200, Mine),
+    {ok, Attacker} = nova_test:get("/posts/new", Planted),
+    ?assertStatus(302, Attacker).
 ```
 
-`blog_web` is the suites' small HTTP client: it keeps a cookie jar as a map and pulls the CSRF token out of a form. It lives in `test/blog_web.erl`.
+The test uses `nova_test`, the test profile's HTTP client. `nova_test:session/1` gives it a cookie jar that works like a browser's: each request sends the jar's cookies and stores the ones the response sets, so `Session` follows the login. `Planted` is a Config with one cookie set by `nova_test:set_cookie/3` and no jar, so it keeps sending the attacker's ID whatever the server answers. `nova_test:csrf_token/1` reads the token out of the form. [Integration Testing](../testing/integration-testing.md#html-forms-cookies-and-csrf) has the rest.
 
 ## Expiry and restarts
 
@@ -248,12 +259,16 @@ delete(Req) ->
 The flash test follows a redirect to the login page and reloads it:
 
 ```erlang
-flash_is_shown_once(_Config) ->
-    {302, _, _, Jar} = blog_web:get(#{}, "/posts/new"),
-    {200, _, Login, Jar} = blog_web:get(Jar, "/login"),
-    ?assertNotEqual(nomatch, binary:match(Login, ~"Please log in first.")),
-    {200, _, Again, Jar} = blog_web:get(Jar, "/login"),
-    ?assertEqual(nomatch, binary:match(Again, ~"Please log in first.")).
+flash_is_shown_once(Config) ->
+    Session = nova_test:session(Config),
+    {ok, Redirect} = nova_test:get("/posts/new", Session),
+    ?assertStatus(302, Redirect),
+    Id = nova_test:cookie(~"session_id", Session),
+    {ok, Login} = nova_test:get("/login", Session),
+    ?assertNotEqual(nomatch, binary:match(nova_test:body(Login), ~"Please log in first.")),
+    {ok, Again} = nova_test:get("/login", Session),
+    ?assertEqual(nomatch, binary:match(nova_test:body(Again), ~"Please log in first.")),
+    ?assertCookie(~"session_id", Id, Session).
 ```
 
 ## Distributed sessions
