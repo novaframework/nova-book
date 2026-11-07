@@ -19,8 +19,7 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    blog_data_fixtures:start(),
-    nova_test:start(blog, Config).
+    blog_data_fixtures:start(Config).
 
 end_per_suite(Config) ->
     nova_test:stop(Config).

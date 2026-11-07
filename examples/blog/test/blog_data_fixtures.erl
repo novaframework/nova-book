@@ -1,14 +1,16 @@
 -module(blog_data_fixtures).
 
--export([start/0, checkout/0, checkin/0, user/1, post/2, url/1, request/3, request/2]).
+-export([start/0, start/1, checkout/0, checkin/0, user/1, post/2, url/1, request/3, request/2]).
 -export([token/1, request_as/3, request_as/4, session/1, admin/1]).
 
 start() ->
+    start([]).
+
+start(Config) ->
     ok = application:set_env(nova_auth, pbkdf2_iterations, 1000),
-    {ok, _} = application:ensure_all_started(blog),
-    [#{app := blog}] = nova_sup:get_started_applications(),
-    {ok, _} = application:ensure_all_started(inets),
-    kura_sandbox:start().
+    Config1 = nova_test:start(blog, Config),
+    kura_sandbox:start(),
+    Config1.
 
 checkout() ->
     kura_sandbox:checkout(blog_repo, #{shared => true}).
