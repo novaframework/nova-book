@@ -17,7 +17,7 @@
  {blog, [
      {json_lib, blog_json},
      {ops_token, ~"dev-ops-token"},
-     {metrics_port, 9464},
+     {metrics, #{port => 9464}},
      {cors_origins, [~"http://localhost:5173"]},
      {mailer, #{adapter => hikyaku_adapter_logger, level => notice}},
      {mail_from, {~"Nova Blog", ~"noreply@blog.test"}}
@@ -32,7 +32,7 @@
      {cowboy_configuration, #{
          port => 8080,
          stream_handlers => [
-             blog_otel_h,
+             otel_nova_stream_h,
              nova_stream_h,
              blog_session_h,
              cowboy_compress_h,
@@ -41,7 +41,6 @@
          middleware_handlers => [
              arizona_cowboy_middleware,
              nova_router,
-             blog_otel_middleware,
              nova_plugin_handler,
              nova_security_handler,
              nova_handler,
@@ -50,6 +49,7 @@
      }},
      {bootstrap_application, blog},
      {plugins, [
+         {pre_request, otel_nova_plugin, #{}},
          {pre_request, blog_request_logger, #{}},
          {pre_request, nova_request_plugin, #{decode_json_body => true,
                                               read_urlencoded_body => true}},
@@ -97,7 +97,7 @@
      {readers, [
          #{
              module => otel_metric_reader,
-             config => #{export_interval_ms => 5000, exporter => {blog_prom_exporter, #{}}}
+             config => #{export_interval_ms => 5000, exporter => {otel_nova_prom_exporter, #{}}}
          }
      ]}
  ]},

@@ -7,6 +7,7 @@
     every_config_parses/1,
     every_config_declares_the_repo/1,
     every_config_points_shigoto_at_the_repo/1,
+    every_config_wires_tracing/1,
     prod_secrets_come_from_the_environment/1,
     prod_numbers_have_defaults/1,
     prod_is_hardened/1,
@@ -20,6 +21,7 @@ all() ->
         every_config_parses,
         every_config_declares_the_repo,
         every_config_points_shigoto_at_the_repo,
+        every_config_wires_tracing,
         prod_secrets_come_from_the_environment,
         prod_numbers_have_defaults,
         prod_is_hardened,
@@ -47,6 +49,13 @@ declares_repo(#{backend := kura_backend_postgres, host := _, database := _, port
 every_config_points_shigoto_at_the_repo(_Config) ->
     [blog_repo = env(File, shigoto, repo) || File <- config_files()].
 
+every_config_wires_tracing(_Config) ->
+    [wires_tracing(File) || File <- config_files()].
+
+wires_tracing(File) ->
+    #{stream_handlers := [otel_nova_stream_h | _]} = env(File, nova, cowboy_configuration),
+    [{pre_request, otel_nova_plugin, #{}} | _] = env(File, nova, plugins).
+
 prod_secrets_come_from_the_environment(_Config) ->
     File = prod(),
     #{api_key := ~"@MAILGUN_API_KEY@", domain := ~"@MAILGUN_DOMAIN@"} = env(File, blog, mailer),
@@ -59,7 +68,7 @@ prod_numbers_have_defaults(_Config) ->
     File = prod(),
     #{port := 5432} = repo(File),
     #{port := 8080} = env(File, nova, cowboy_configuration),
-    9464 = env(File, blog, metrics_port).
+    #{port := 9464, ip := {0, 0, 0, 0}} = env(File, blog, metrics).
 
 prod_is_hardened(_Config) ->
     File = prod(),
@@ -70,7 +79,8 @@ prod_is_hardened(_Config) ->
         H
      || H <- Handlers, lists:member(H, [nova_stream_h, blog_session_h])
     ],
-    [] = [Route || {mcp, _, _, _} = Route <- env(File, arizona_nova, routes)].
+    [] = [Route || {mcp, _, _, _} = Route <- env(File, arizona_nova, routes)],
+    false = env(File, opentelemetry_nova, trust_incoming_context).
 
 prod_serves_the_tested_live_routes(_Config) ->
     Tested = [
