@@ -289,22 +289,24 @@ An adapter is the seam Hikyaku was designed with, so no mocking library is neede
 
 ## Workers
 
-A Shigoto worker is a module with `perform/1`. Pure helpers in a worker are tested like any function. `blog_purge_worker:next_run/1` from [Scheduling](../jobs/scheduling.md) decides when the next purge runs:
+A Shigoto worker is a module with `perform/1`. Pure helpers in a worker are tested like any function. `blog_purge_worker:cutoff/2` from [Scheduling](../jobs/scheduling.md#the-purge-worker) works out the time before which deleted posts are purged. `test/blog_purge_worker_tests.erl`:
 
 ```erlang
-next_run_is_the_next_3am_test_() ->
+cutoff_is_days_before_now_test_() ->
     [
         ?_assertEqual(
-            {{2026, 11, 3}, {3, 0, 0}}, blog_purge_worker:next_run({{2026, 11, 3}, {1, 15, 0}})
+            {{2026, 10, 4}, {3, 0, 0}}, blog_purge_worker:cutoff({{2026, 11, 3}, {3, 0, 0}}, 30)
         ),
         ?_assertEqual(
-            {{2026, 11, 4}, {3, 0, 0}}, blog_purge_worker:next_run({{2026, 11, 3}, {3, 0, 0}})
+            {{2026, 12, 16}, {3, 0, 0}}, blog_purge_worker:cutoff({{2027, 1, 15}, {3, 0, 0}}, 30)
         ),
         ?_assertEqual(
-            {{2027, 1, 1}, {3, 0, 0}}, blog_purge_worker:next_run({{2026, 12, 31}, {23, 59, 59}})
+            {{2028, 2, 29}, {3, 0, 0}}, blog_purge_worker:cutoff({{2028, 3, 1}, {3, 0, 0}}, 1)
         )
     ].
 ```
+
+The current time is an argument rather than a call inside the function, so the edge cases (a month boundary, a year boundary, a leap day) are tested without a clock. `perform/1` passes `calendar:universal_time()`.
 
 For `perform/1` itself, `shigoto:perform_job/2,3` runs a worker through the same middleware chain production uses, with no queue, no job row and no retries, and returns what `perform/1` returned. It does not need Shigoto to be started. Most of the blog's workers read the database, so [Transactional Email](../email/transactional-email.md) and [Operations](../jobs/operations.md) call `perform_job` from Common Test with real rows.
 

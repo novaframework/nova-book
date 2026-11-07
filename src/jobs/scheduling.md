@@ -55,45 +55,38 @@ To call off a scheduled publication, cancel the job: `shigoto:cancel(JobId)`, or
 
 The blog soft-deletes posts ([Data Safety](../data-layer/data-safety.md)) and `blog_posts:purge_deleted/1` removes the ones deleted before a given time. That should happen every night.
 
-### Cron, and why the blog does not use it
+### Cron
 
-Shigoto has a cron scheduler. Entries go in the `cron` setting as `{Name, Schedule, Worker, Args}`, or with a fifth element `#{timezone => Zone}` where `Zone` is `utc`, an hour offset, or an IANA name such as `~"Europe/Stockholm"`:
+Shigoto has a cron scheduler. Entries go in the `cron` setting as `{Name, Schedule, Worker, Args}`. `config/dev_sys.config.src` and `config/prod_sys.config.src`:
 
 ```erlang
 {shigoto, [
     {repo, blog_repo},
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
     {cron, [
         {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
     ]}
-]}
+]},
 ```
 
-The schedule is the usual five fields (minute, hour, day of month, month, day of week). Every minute, one node (chosen with a PostgreSQL advisory lock) inserts a job for each entry that is due.
+The schedule is the usual five fields (minute, hour, day of month, month, day of week), so this entry inserts a `blog_purge_worker` job with `#{~"days" => 30}` at 03:00 UTC every day. Aliases such as `@daily` and `@hourly` work too. The test config has no `cron` key, so nothing is scheduled behind a test's back.
 
-````admonish bug title="Cron does not fire in Shigoto 1.9.12"
-The leader check in `shigoto_cron` expects the advisory-lock query to answer with a tuple row, but Shigoto's database layer returns rows as maps, so the check never passes and no cron job is ever inserted. A `* * * * *` entry inserts nothing, however long you wait. Cron jobs would also always go to the `default` queue, ignoring the worker's `queue/0`.
+How it works, because it matters once you run more than one node:
 
-`test/blog_jobs_ops_SUITE.erl` pins the behaviour. It triggers a check by hand rather than waiting a minute:
+- **One node schedules.** Every node runs a scheduler that ticks once a minute. Each pass runs in a transaction that first takes a PostgreSQL advisory lock without waiting; the node that gets it schedules, the others skip that minute. Run as many nodes as you like and each entry still gets one job per due minute.
+- **The minute comes from PostgreSQL**, not from the node's clock, so a node whose clock is off cannot make a minute due twice.
+- **Shigoto remembers the last minute it scheduled** for each entry, in the `shigoto_cron` table, in the same transaction as the jobs it inserted. A pass only looks at the minutes after that one. A tick that runs late, a restart within the minute, or two nodes racing never schedule a minute twice.
+- **Catch-up is limited to 60 minutes.** After downtime, an entry that was due in the last 60 minutes is scheduled once on the first pass. A deploy that takes the blog down from 02:55 to 03:10 still purges; a night with the database down from 01:00 to 05:00 skips that purge, and the next one is the following night.
+- **A new entry is not backfilled.** The first time Shigoto sees an entry's name, it starts from the current minute. Adding the purge at 14:00 does not run it for 03:00 that morning.
+- **The job goes to the worker's queue.** `blog_purge_worker:queue/0` says `maintenance`, so the purge runs in the one-slot `maintenance` queue, not in `default`.
 
-```erlang
-cron_entries_do_not_fire(_Config) ->
-    Entry = {~"publish-every-minute", ~"* * * * *", blog_publish_worker, #{~"post_id" => 0}},
-    ok = application:set_env(shigoto, cron, [Entry]),
-    try
-        shigoto_cron ! check,
-        timer:sleep(500),
-        shigoto_testing:refute_enqueued(#{worker => blog_publish_worker})
-    after
-        application:unset_env(shigoto, cron)
-    end.
-```
+An entry can take a fifth element, `#{timezone => Zone}`, where `Zone` is `utc` (the default), an hour offset such as `1` or `~"+1"`, or an IANA name such as `~"Europe/Stockholm"`. The schedule is then read in that zone, with daylight saving time: `{~"morning-digest", ~"0 7 * * *", Worker, Args, #{timezone => ~"Europe/Stockholm"}}` runs at 07:00 Stockholm time, summer and winter.
 
-When that test fails after an upgrade, cron works, and the cron entry above can replace the self-scheduling job below.
-````
+An entry that cannot be scheduled (a schedule that does not parse, args that are not JSON, a worker whose `queue/0` is not a binary) is skipped with a `shigoto_cron_entry_skipped` warning, and the other entries still run. `blog_prod_config_SUITE` parses the production entry, so a typo fails the build rather than the night.
 
-### A job that schedules its next run
+### The purge worker
 
-Until then, the purge reschedules itself. `src/workers/blog_purge_worker.erl`:
+`src/workers/blog_purge_worker.erl`:
 
 ```erlang
 -module(blog_purge_worker).
@@ -101,71 +94,64 @@ Until then, the purge reschedules itself. `src/workers/blog_purge_worker.erl`:
 
 -include_lib("kernel/include/logger.hrl").
 
--export([perform/1, queue/0, unique/0, schedule_next/0, next_run/1]).
-
--define(RETENTION_DAYS, 30).
+-export([perform/1, queue/0, cutoff/2]).
 
 queue() -> ~"maintenance".
 
-unique() -> #{keys => [worker], states => [available, retryable], period => infinity}.
-
 perform(#{~"days" := Days}) ->
-    {ok, _} = schedule_next(),
-    Now = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
-    Before = calendar:gregorian_seconds_to_datetime(Now - Days * 86400),
-    {ok, Purged} = blog_posts:purge_deleted(Before),
+    {ok, Purged} = blog_posts:purge_deleted(cutoff(calendar:universal_time(), Days)),
     ?LOG_INFO(#{msg => ~"purged soft-deleted posts", count => Purged}),
     {ok, #{~"purged" => Purged}}.
 
-schedule_next() ->
-    shigoto:insert(#{
-        worker => ?MODULE,
-        args => #{~"days" => ?RETENTION_DAYS},
-        scheduled_at => next_run(calendar:universal_time())
-    }).
-
-next_run({Date, Time}) when Time < {3, 0, 0} ->
-    {Date, {3, 0, 0}};
-next_run({Date, _Time}) ->
-    Tomorrow = calendar:gregorian_days_to_date(calendar:date_to_gregorian_days(Date) + 1),
-    {Tomorrow, {3, 0, 0}}.
+cutoff(Now, Days) ->
+    calendar:gregorian_seconds_to_datetime(
+        calendar:datetime_to_gregorian_seconds(Now) - Days * 86400
+    ).
 ```
 
-The pieces:
+The retention period is in the cron entry's args, not in the worker, so changing it is a config change. `cutoff/2` is a pure function of the time, which makes it easy to test ([Unit Testing](../testing/unit-testing.md#workers)). The worker returns `{ok, #{~"purged" => N}}`, which is stored on the job as its result. Running it twice is harmless: the second run finds nothing older than the cutoff.
 
-- `schedule_next/0` inserts a purge for the next 03:00 UTC.
-- `unique/0` allows only one purge waiting (`available`) or waiting for a retry (`retryable`), whatever its args. `executing` is left out on purpose: when the purge runs, its call to `schedule_next/0` must not conflict with itself.
-- `perform/1` schedules the next run first. If the purge then crashes, the job is retried, the retry's `schedule_next/0` finds tomorrow's job already there and gets `{ok, {conflict, _}}`, and there is still exactly one purge tomorrow.
-- It returns `{ok, #{~"purged" => N}}`, which is stored on the job as its result.
+### Testing cron
 
-Something has to insert the first one. `blog_app:start/2` calls `blog_jobs:schedule_maintenance/0` on every boot:
+The test config runs no queues and has no cron entries, and you do not want a test to wait for 03:00. `shigoto_cron:schedule_once/0` runs one scheduling pass in the calling process, right now, and inserts the jobs that are due. The tests set an entry, run a pass and look at the jobs table.
+
+They live in `test/blog_jobs_commit_SUITE.erl`, which runs outside Kura's sandbox: a pass writes the `shigoto_cron` table on its own connection and commits, and the second test changes that row afterwards ([Operations](operations.md#the-database-and-the-sandbox) explains why that cannot happen inside the sandbox). The suite deletes its jobs and cron rows itself, before and after every test.
+
+An entry due every minute is scheduled once, however many passes run in that minute, and goes to the worker's queue:
 
 ```erlang
-schedule_maintenance() ->
-    case blog_purge_worker:schedule_next() of
-        {ok, _JobOrConflict} -> ok;
-        {error, Reason} -> ?LOG_WARNING(#{msg => ~"could not schedule purge", reason => Reason})
-    end.
+cron_schedules_the_purge_on_its_queue(_Config) ->
+    Entry = {~"purge-every-minute", ~"* * * * *", blog_purge_worker, #{~"days" => 30}},
+    ok = application:set_env(shigoto, cron, [Entry]),
+    ok = shigoto_cron:schedule_once(),
+    ok = shigoto_cron:schedule_once(),
+    [#{queue := ~"maintenance", args := Args}] =
+        shigoto_testing:all_enqueued(#{worker => blog_purge_worker}),
+    #{~"days" := 30} = json:decode(Args).
 ```
 
-On every boot after the first, and on every other node, the insert is a conflict and changes nothing. The tests, from `test/blog_jobs_workers_SUITE.erl`:
+Catch-up, and no backfill, with an entry that was due ten minutes ago:
 
 ```erlang
-purge_worker_schedules_its_next_run(_Config) ->
-    {ok, #{~"purged" := 0}} = shigoto:perform_job(blog_purge_worker, #{~"days" => 30}),
-    [#{scheduled_at := At}] = shigoto_testing:all_enqueued(#{
-        worker => blog_purge_worker, state => ~"available"
-    }),
-    {_Date, {3, 0, 0}} = truncate(At),
-    {ok, {conflict, _}} = blog_purge_worker:schedule_next().
-
-next_purge_is_at_three_in_the_morning(_Config) ->
-    {{2026, 11, 3}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {1, 30, 0}}),
-    {{2026, 11, 4}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 11, 3}, {3, 0, 0}}),
-    {{2027, 1, 1}, {3, 0, 0}} = blog_purge_worker:next_run({{2026, 12, 31}, {22, 0, 0}}).
+cron_catches_up_a_missed_run(_Config) ->
+    {ok, Now} = shigoto_repo:current_minute(blog_repo),
+    {_Date, {Hour, Minute, _}} = minutes_before(Now, 10),
+    Schedule = iolist_to_binary(io_lib:format("~b ~b * * *", [Minute, Hour])),
+    Entry = {~"purge-catch-up", Schedule, blog_purge_worker, #{~"days" => 30}},
+    ok = application:set_env(shigoto, cron, [Entry]),
+    ok = shigoto_cron:schedule_once(),
+    shigoto_testing:refute_enqueued(#{worker => blog_purge_worker}),
+    {ok, _} = blog_repo:query(
+        ~"UPDATE shigoto_cron SET last_scheduled_at = last_scheduled_at - interval '20 minutes'",
+        []
+    ),
+    ok = shigoto_cron:schedule_once(),
+    shigoto_testing:assert_enqueued(#{worker => blog_purge_worker}).
 ```
 
-`next_run/1` is a pure function of the current time, so its edge cases (just before 03:00, exactly 03:00, New Year's Eve) are tested without a clock.
+The first pass sees a new entry and starts from the current minute, so the run ten minutes ago is not made up. Moving `last_scheduled_at` back 20 minutes makes it look as if the node had been down since then; the next pass finds the missed minute within the last 60 and schedules it. `shigoto_repo:current_minute/1` is the database's minute that cron itself uses, so the test and the scheduler agree on the time.
+
+`schedule_once/0` answers `{error, in_transaction}` when called inside a Shigoto or Kura transaction, since the pass would join it and hold the cron lock until it ended.
 
 ## Dependencies
 

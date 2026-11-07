@@ -80,7 +80,10 @@ The production file has no secrets in it. Every value that differs between deplo
 ]},
 {shigoto, [
     {repo, blog_repo},
-    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+    {cron, [
+        {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+    ]}
 ]},
 {nova, [
     {environment, prod},
@@ -176,7 +179,7 @@ It is tempting to skip `sys.config` and call `application:set_env(kura, repos, .
 
 ## Shigoto and the mailer
 
-Shigoto's own settings (`repo`, queues, pruning) are covered in [Background Jobs](../jobs/background-jobs.md#configuration). Its production entry (shown above) needs no secrets: it reuses `blog_repo`'s pool. `shigoto` is in the blog's `applications`, so a release without a `shigoto` section does not start at all; the config guard below checks every file points it at the repo.
+Shigoto's own settings (`repo`, queues, pruning) are covered in [Background Jobs](../jobs/background-jobs.md#configuration), and its `cron` entry in [Scheduling](../jobs/scheduling.md#cron). Its production entry (shown above) needs no secrets: it reuses `blog_repo`'s pool. `shigoto` is in the blog's `applications`, so a release without a `shigoto` section does not start at all; the config guard below checks every file points it at the repo, and that the production purge entry parses and runs on a queue the node works on.
 
 The mailer is the Mailgun variant from [Sending Email](../email/sending-email.md), with its key and domain from the environment. `base_url` is what confirmation and reset links are built from; without it they would point at `http://localhost:8080`.
 
