@@ -334,18 +334,19 @@ The file, as generated:
 ```erlang
 -module(blog_pages_controller).
 
--export([about/1, contact/1]).
+-export([
+    about/1,
+    contact/1
+]).
 
-about(#{req := _Req} = _NovaReq) ->
-    {json, #{<<"message">> => <<"TODO">>}}.
+about(_Req) ->
+    {json, #{~"message" => ~"TODO"}}.
 
-contact(#{req := _Req} = _NovaReq) ->
-    {json, #{<<"message">> => <<"TODO">>}}.
+contact(_Req) ->
+    {json, #{~"message" => ~"TODO"}}.
 ```
 
-```admonish bug
-The request map has no `req` key, so these clauses never match and every call fails with a 500. Change the heads to `about(_Req) ->` before you use the stubs.
-```
+Each stub takes the request and answers with placeholder JSON, so you can route to it at once and fill in the bodies later. The output is already erlfmt-formatted, so `rebar3 fmt --check` passes right after generating. Without `--actions` you get `list`, `show`, `create`, `update` and `delete`; `create` answers `{json, 201, #{}, ...}` and `delete` `{status, 204}`. The generator never overwrites an existing file.
 
 ---
 
