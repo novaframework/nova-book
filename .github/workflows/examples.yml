@@ -60,6 +60,15 @@ jobs:
       - name: Migration safety
         run: rebar3 kura lint_migrations
 
+      - name: Dialyzer PLT cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: examples/blog/_build/default/*_plt
+          key: plt-${{ runner.os }}-otp29-${{ hashFiles('examples/blog/rebar.lock') }}
+
+      - name: Dialyzer
+        run: rebar3 dialyzer
+
       - name: EUnit
         run: rebar3 eunit
 
