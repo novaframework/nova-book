@@ -15,10 +15,7 @@ fields() ->
     ].
 
 indexes() ->
-    [
-        {[post_id, tag_id], #{unique => true}},
-        {[tag_id], #{}}
-    ].
+    [{[tag_id], #{}}].
 
 associations() ->
     [
