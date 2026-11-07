@@ -323,7 +323,7 @@ Add a route group for the API to `src/blog_router.erl`, before the last group (t
 },
 ```
 
-Restart the node after editing the router (see [Routing](../foundations/routing.md)).
+Under `rebar3 nova serve` the new routes answer as soon as you save the router ([Your First Nova Application](../foundations/create-app.md)); in a plain `rebar3 shell`, restart it.
 
 ## Trying it with curl
 
