@@ -1,6 +1,6 @@
 # Background Jobs
 
-The [previous part](../email/transactional-email.md) moved email out of the request and into background jobs. This part looks at the job queue itself, [Shigoto](https://hex.pm/packages/shigoto) 1.9.12: how it is set up, what a worker can declare, what happens when a job fails, and how jobs are made unique, scheduled and tested.
+The [previous part](../email/transactional-email.md) moved email out of the request and into background jobs. This part looks at the job queue itself, [Shigoto](https://hex.pm/packages/shigoto) 1.10: how it is set up, what a worker can declare, what happens when a job fails, and how jobs are made unique, scheduled and tested.
 
 Shigoto stores jobs in PostgreSQL, in the blog's own database. There is no separate broker to run. Queue processes on every node poll the jobs table and claim work with `SELECT ... FOR UPDATE SKIP LOCKED`, so two nodes never take the same job. A job runs **at least once**: if a node dies halfway through a job, the job is picked up again later. Workers should therefore be safe to run twice, which is why the blog's workers load their data by id and check its state before acting.
 
@@ -8,7 +8,7 @@ Shigoto stores jobs in PostgreSQL, in the blog's own database. There is no separ
 
 ### Dependency and start order
 
-`rebar.config` has `{shigoto, "~> 1.9"}`, and `src/blog.app.src` starts it after Kura:
+`rebar.config` has `{shigoto, "~> 1.10"}`, and `src/blog.app.src` starts it after Kura:
 
 ```erlang
 {applications, [
@@ -25,7 +25,7 @@ Shigoto stores jobs in PostgreSQL, in the blog's own database. There is no separ
 ]},
 ```
 
-The order matters. Kura starts the `blog_repo` connection pool when the `kura` application starts, and Shigoto uses that pool from the moment it starts: its application start creates its tables and its queue processes begin polling. Listing `shigoto` after `kura` and `kura_postgres` makes sure the pool exists first. Shigoto also starts its own dependencies, `minato` (the PostgreSQL driver Kura uses) and `seki` (resilience primitives, see [Operations](operations.md#resilience)).
+The order matters. Kura starts the `blog_repo` connection pool when the `kura` application starts, and Shigoto uses that pool from the moment it starts: its application start migrates its tables and its queue processes begin polling. Listing `shigoto` after `kura` and `kura_postgres` makes sure the pool exists first. Shigoto also starts its own dependencies, `minato` (the PostgreSQL driver Kura uses) and `seki` (resilience primitives, see [Operations](operations.md#resilience)).
 
 ### Configuration
 
@@ -34,15 +34,14 @@ The order matters. Kura starts the `blog_repo` connection pool when the `kura` a
 ```erlang
 {shigoto, [
     {repo, blog_repo},
-    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]}
+    {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+    {cron, [
+        {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+    ]}
 ]},
 ```
 
-`repo` is the name of the minato pool to use. kura_postgres names the pool after the repo, so `{repo, blog_repo}` makes Shigoto share the blog's pool and database.
-
-```admonish note title="repo, not pool"
-Shigoto's README and guides still show `{pool, my_app_db}` and setting up a pgo pool. Those are from before Shigoto moved to minato. With Kura, set `repo`; `shigoto_config:pool/0` reads `repo` first and falls back to `pool`.
-```
+`repo` is the name of the minato pool to use. kura_postgres names the pool after the repo, so `{repo, blog_repo}` makes Shigoto share the blog's pool and database. It also tells Shigoto that the pool belongs to a Kura repo, which is what lets the two share a transaction ([Transactions](#transactions)). The alternative, `{pool, Name}`, is for a minato pool Shigoto has to itself. The `cron` entry is the nightly purge from [Scheduling](scheduling.md#cron).
 
 The other settings, with their defaults (from `shigoto_config`):
 
@@ -71,23 +70,53 @@ Nothing runs in the background during tests, so a test decides exactly when jobs
 
 ### Shigoto's tables
 
-Shigoto creates its tables itself: `shigoto_app` calls `shigoto_migration:up/1` on the pool every time it starts. The migration is idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`), and a newer Shigoto adds its new columns the same way, so there is nothing to keep in step with Kura's migrations.
+Shigoto creates and upgrades its tables itself: `shigoto_app` runs `shigoto_migration:up/1` on the pool every time it starts. The migration takes an advisory lock first, so nodes that boot together migrate one after another, and it does nothing when the schema is already current (Shigoto records its schema version in a comment on `shigoto_jobs`). A newer Shigoto upgrades its own tables the same way, so there is nothing to keep in step with Kura's migrations.
 
-There is one catch, on the very first boot. Shigoto starts before the blog, and the blog is where Kura's migrator runs and creates the database if it is missing. On a brand new database Shigoto's migration therefore runs against a database that does not exist yet. Shigoto tries 5 times, 1 to 5 seconds apart, then starts without its queues and logs `shigoto_migration_pending` at error level. From then on it retries every 30 seconds; meanwhile `shigoto:health/0` reports `migration_pending` and no jobs run.
+There is one catch, on the very first boot. Shigoto starts before the blog, and the blog is where Kura's migrator runs and creates the database if it is missing. On a brand new database Shigoto's migration therefore runs against a database that does not exist yet. Shigoto tries 5 times, 1 to 5 seconds apart, logging a `shigoto_migration_failed` warning each time. Then it starts without its queues and logs `shigoto_migration_pending` at error level. From then on it retries every 30 seconds. Meanwhile no jobs run, `shigoto:health/0` reports `migration_pending` and `shigoto:add_queue/2` answers `{error, migration_pending}`.
 
-The blog runs the migration itself once Kura's has created the database, then tells Shigoto to retry at once, in `src/blog_app.erl`:
+The blog does not wait for that retry. In `src/blog_app.erl` it runs Shigoto's migration itself once Kura has created the database, and makes sure Shigoto's queues run before the blog starts:
 
 ```erlang
 start(_StartType, _StartArgs) ->
+    ok = require_encryption_key(),
     {ok, _} = kura_migrator:migrate(blog_repo),
-    ok = shigoto_migration:up(blog_repo),
-    _ = shigoto_migrator:retry_now(),
-    ok = blog_jobs:schedule_maintenance(),
+    ok = migrate_jobs(),
     ok = nova_handlers:register_handler(text, fun blog_text_handler:handle/3),
+    ok = opentelemetry_nova:setup(),
+    ok = opentelemetry_kura:setup(),
     blog_sup:start_link().
 ```
 
-`shigoto_migration:up/1` returns `{error, Reason}` when a statement fails, so the `ok =` match stops the boot if the tables cannot be created. `shigoto_migrator:retry_now/0` returns `not_running` when nothing is pending, which is every boot after the first, so its result is ignored. On the first boot the queues start a moment after `blog_app:start/2` returns. The five attempts before that still cost a few seconds, and the error report is expected; the `shigoto_migration_completed` notice follows it. (`blog_jobs:schedule_maintenance/0` is the [recurring purge](scheduling.md#recurring-jobs).)
+```erlang
+migrate_jobs() ->
+    ok = shigoto_migration:up(blog_repo),
+    case whereis(shigoto_migrator) of
+        undefined ->
+            ok;
+        Migrator ->
+            Ref = monitor(process, Migrator),
+            _ = shigoto_migrator:retry_now(),
+            receive
+                {'DOWN', Ref, process, Migrator, _Reason} -> ok
+            after 10000 ->
+                error(shigoto_queues_not_started)
+            end
+    end.
+```
+
+- `shigoto_migration:up/1` returns `ok`, or `{error, Reason}` when a statement fails, so the `ok =` match stops the boot if the tables cannot be created. On every boot after the first it finds the schema current and changes nothing.
+- `shigoto_migrator` is the process that holds the queues back. It only runs while a migration is pending, so on a normal boot `whereis/1` finds nothing and `migrate_jobs/0` is done.
+- When it is there, `shigoto_migrator:retry_now/0` tells it to retry at once. That is a message, so it returns before the retry has run. The retry finds the schema current, starts the configured queues and stops the process normally. Waiting for the `'DOWN'` makes `blog_app:start/2` return only once the queues are running, so no request and no test ever sees `migration_pending`. The timeout turns a retry that keeps failing into a boot failure instead of a silent node with no queues.
+
+The first boot is still slow: Shigoto's five attempts take a few seconds, and the reports above are expected. There is a second wait. Kura's migrator creates the database and then waits for the `blog_repo` pool to answer. The pool has been failing to connect to the missing database for as long as Shigoto retried, and minato waits longer after each failure (up to 30 seconds), so the pool's next attempt can be well over Kura's default 5 second wait away, and `kura_migrator:migrate/1` then fails with `{error, pool_unavailable}`. `config/test_sys.config` gives Kura more time, because `blog_test` is created by the first test run (on CI, by every run):
+
+```erlang
+{kura, [
+    {migration_pool_ready_timeout, 35000},
+    {repos, #{
+```
+
+Only a missing database needs this. In development, Docker Compose creates `blog_dev` when the container starts ([Database Setup](../data-layer/setup.md)). In production the database exists before the release starts (you create it when you provision it, see [Deployment](../production/deployment.md#migrations-at-boot)). In both, Shigoto migrates at its own start and `migrate_jobs/0` finds nothing to do.
 
 Why not a Kura migration that runs Shigoto's DDL? It would freeze the schema of whichever Shigoto version you had when you wrote it, while Shigoto expects to upgrade its own tables on boot. Running Shigoto's own migration at boot keeps that working.
 
@@ -273,11 +302,13 @@ job_is_discarded_after_max_attempts(Config) ->
     [#{~"error" := ~"smtp_down", ~"attempt" := 1}] = json:decode(Errors).
 ```
 
-Discarded and cancelled jobs can be brought back with `shigoto:retry/1` (one job) or `shigoto:retry_by/1`, which takes a filter map of `worker`, `queue`, `tags` or `args` (containment); `shigoto:cancel_by/1` cancels waiting jobs with the same filters. Despite its documentation, `retry_by/1` does not accept `state`: `shigoto:retry_by(#{state => ~"discarded"})` crashes with `function_clause`. It only ever touches discarded and cancelled jobs anyway.
+The comment is created in `manual` mode so that `add_comment/3`'s own notification only goes to the test buffer. Otherwise the table would already hold a notification for the comment, with the worker's five attempts, and the test's insert would be a unique conflict with it.
+
+Discarded and cancelled jobs can be brought back with `shigoto:retry/1` (one job) or `shigoto:retry_by/1`, which takes a filter map of `worker`, `queue`, `tags`, `args` (containment) and `state`; `shigoto:cancel_by/1` cancels waiting jobs with the same filters. `state` narrows the states the call already acts on: `shigoto:retry_by(#{worker => blog_comment_notification_worker, state => ~"discarded"})` brings back the notifications that ran out of attempts and leaves the cancelled ones alone.
 
 ### Snoozing
 
-`{snooze, Seconds}` puts the job back to `available`, due in `Seconds`, and records no error. The notification worker snoozes on a 429:
+`{snooze, Seconds}` puts the job back to `available`, due in `Seconds`, and records no error. It does not use up an attempt. The notification worker snoozes on a 429:
 
 ```erlang
 snoozed_job_is_rescheduled(Config) ->
@@ -289,15 +320,18 @@ snoozed_job_is_rescheduled(Config) ->
     ),
     ok = shigoto:drain_queue(~"mailers"),
     [#{id := JobId}] = shigoto_testing:all_enqueued(#{worker => blog_comment_notification_worker}),
-    {ok, #{state := ~"available", attempt := 1, errors := ~"[]", scheduled_at := At}} =
-        shigoto:get_job(JobId),
+    {ok, #{
+        state := ~"available",
+        attempt := 1,
+        max_attempts := 6,
+        errors := ~"[]",
+        scheduled_at := At
+    }} = shigoto:get_job(JobId),
     Delay = seconds_from_now(At),
     true = Delay > 50 andalso Delay =< 60.
 ```
 
-```admonish warning title="A snooze still uses up an attempt"
-Look at `attempt := 1` above. Shigoto increments `attempt` every time a job is claimed, and a snooze does not give it back (the README says otherwise). A job that snoozes four times and then fails once, with `max_attempts` 5, is discarded without a retry. Give workers that snooze a generous `max_attempts`, or count snoozes yourself.
-```
+Look at the numbers. `attempt` counts runs, so it is 1 after the first run, snooze or not. To keep the snooze from counting against the worker's five attempts, Shigoto raises the job's `max_attempts` by one instead: 6 after one snooze. A job that snoozes four times and then fails still has all its retries left. A job that only ever snoozes is never discarded, so snooze for conditions that clear by themselves, such as a provider's rate limit, and return `{error, Reason}` for the rest.
 
 ## Unique jobs
 
@@ -324,19 +358,25 @@ The insert answers `{ok, {conflict, Existing}}` with the job that is already the
 | `replace` | `[]` | On conflict, update these fields of the existing job (`args`, `priority`, `max_attempts`, `scheduled_at`) |
 | `debounce` | none | On conflict, push the existing job's `scheduled_at` this many seconds into the future |
 
-The check runs under a PostgreSQL advisory lock, so two nodes inserting the same job at the same moment still produce one. `states` is the option to think about: the [recurring purge](scheduling.md#recurring-jobs) leaves `executing` out, so that a running purge can schedule its own next run.
+The check runs under a PostgreSQL advisory lock, so two nodes inserting the same job at the same moment still produce one. `states` is the option to think about. The default leaves `completed` out, so a notification can be sent again once the first one has gone; the [account email worker](../email/transactional-email.md#confirming-addresses-and-resetting-passwords) adds `completed` and a `period` of 300 seconds, so each user gets at most one email of each kind per five minutes.
 
 ## Transactions
 
-`shigoto:transaction/1` runs a function in a transaction on Shigoto's pool. Every job inserted inside it commits together, or not at all:
+Shigoto's jobs live in the blog's database, on the blog's pool, so a job can commit together with the change it is about. With `{repo, blog_repo}` this works in both directions:
+
+- A job inserted inside `blog_repo:transaction/1` (or a `kura_multi`) runs on that transaction's connection. It commits with the transaction, or disappears with it.
+- Kura writes inside `shigoto:transaction/1` join Shigoto's transaction, because Shigoto opens it through Kura's driver.
+
+The tests are in `test/blog_jobs_commit_SUITE.erl`. A job inserted in a Kura transaction that rolls back is gone:
 
 ```erlang
-shigoto_transaction_groups_job_inserts(_Config) ->
+job_rolls_back_with_a_kura_transaction(_Config) ->
     rolled_back =
         try
-            shigoto:transaction(fun() ->
-                {ok, _} = shigoto:insert(#{worker => blog_publish_worker, args => #{~"post_id" => 1}}),
-                {ok, _} = shigoto:insert(#{worker => blog_publish_worker, args => #{~"post_id" => 2}}),
+            blog_repo:transaction(fun() ->
+                {ok, _} = shigoto:insert(#{
+                    worker => blog_publish_worker, args => #{~"post_id" => 1}
+                }),
                 throw(rolled_back)
             end)
         catch
@@ -345,50 +385,49 @@ shigoto_transaction_groups_job_inserts(_Config) ->
     shigoto_testing:refute_enqueued(#{worker => blog_publish_worker}).
 ```
 
-What you would really like is to commit a job together with the database change it is about: the comment and its notification, in one transaction. Shigoto's documentation promises exactly that ("transactional enqueue"), but that promise dates from when Shigoto and Kura both ran on pgo. With minato, Kura and Shigoto each keep their transaction on their own connection, and neither sees the other's. Two tests pin it, in `test/blog_jobs_workers_SUITE.erl`. A job inserted inside a Kura transaction survives the rollback:
+and a user inserted through Kura inside a Shigoto transaction that rolls back was never there:
 
 ```erlang
-enqueue_inside_kura_transaction_is_not_rolled_back(_Config) ->
-    {aborted, _Job} =
-        try
-            blog_repo:transaction(fun() ->
-                {ok, Job} = shigoto:insert(#{
-                    worker => blog_publish_worker, args => #{~"post_id" => 1}
-                }),
-                throw({aborted, Job})
-            end)
-        catch
-            throw:Aborted -> Aborted
-        end,
-    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
-```
-
-and a Kura write inside a Shigoto transaction survives its rollback (here, soft-deleting a post):
-
-```erlang
-shigoto_transaction_does_not_cover_kura_writes(Config) ->
-    #{id := PostId} = ?config(post, Config),
+kura_write_rolls_back_with_a_shigoto_transaction(_Config) ->
     rolled_back =
         try
             shigoto:transaction(fun() ->
-                {ok, _} = blog_posts:delete_post(?config(post, Config)),
+                _ = blog_data_fixtures:user(~"commit_alice"),
                 throw(rolled_back)
             end)
         catch
             throw:rolled_back -> rolled_back
         end,
-    {error, not_found} = blog_repo:get(blog_post, PostId).
+    {error, not_found} = blog_repo:get_by(blog_user, [{username, ~"commit_alice"}]).
 ```
 
-```admonish bug title="No transactional enqueue with Kura in Shigoto 1.9.12"
-Do not rely on `shigoto:insert/1` inside `blog_repo:transaction/1` or `kura_multi`, nor on `shigoto:transaction/1` to cover Kura writes. If the test above starts failing after an upgrade, the two have learned to share a transaction.
+The suite runs outside Kura's test sandbox and cleans up after itself; [Operations](operations.md#the-database-and-the-sandbox) explains why. Inside the sandbox, neither of these holds.
+
+`shigoto:transaction/1` also groups job inserts on their own. From `test/blog_jobs_workers_SUITE.erl`:
+
+```erlang
+shigoto_transaction_groups_job_inserts(_Config) ->
+    rolled_back =
+        try
+            shigoto:transaction(fun() ->
+                {ok, _} = shigoto:insert(#{
+                    worker => blog_publish_worker, args => #{~"post_id" => 1}
+                }),
+                {ok, _} = shigoto:insert(#{
+                    worker => blog_publish_worker, args => #{~"post_id" => 2}
+                }),
+                throw(rolled_back)
+            end)
+        catch
+            throw:rolled_back -> rolled_back
+        end,
+    shigoto_testing:refute_enqueued(#{worker => blog_publish_worker}).
 ```
 
-The blog works with what is there:
+The blog uses this for the comment and its notification: `blog_posts:add_comment/3` inserts both in one `kura_multi` ([Transactional Email](../email/transactional-email.md#calling-it)). Two things to know:
 
-- **Enqueue after the commit.** `add_comment/3` inserts the comment, and only then the job. If the node dies between the two, one notification is lost, which is acceptable for a notification.
-- **Make the worker tolerate a missing row.** If you enqueue before the change commits, or the change is later undone, the job finds nothing and succeeds without doing anything. All the blog's workers do this.
-- **For work that must not be lost**, write a row describing it in the same Kura transaction as the change (an "outbox" table), and have a recurring job turn outbox rows into jobs.
+- **Which transaction is on the outside.** Either works, but `[shigoto, job, inserted]` telemetry and the `job inserted` log fire when the insert runs. Inside `blog_repo:transaction/1` that is before the commit, so a rolled-back job still shows up as inserted. Inside `shigoto:transaction/1` they fire after the commit. If your metrics must only count committed jobs, make `shigoto:transaction/1` the outer one.
+- **The worker should still be idempotent.** A shared transaction means no job for a comment that was never saved, and no saved comment without its job. It does not make a job run exactly once: jobs run at least once, and a comment can disappear between the commit and the run (deleting a post deletes its comments). So the notification worker still loads the comment by id and does nothing when it is gone.
 
 ---
 

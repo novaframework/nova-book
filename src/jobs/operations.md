@@ -50,7 +50,27 @@ testing_mode_needs_the_confirmation_key(_Config) ->
 
 ### The database and the sandbox
 
-The blog's tests run inside Kura's sandbox ([CRUD and the Query Builder](../data-layer/crud.md#testing-against-the-database)), which rolls back everything at the end of each test. Shigoto does not go through Kura, so its rows are **not** in the sandbox: a job inserted during a test is committed for real. Two consequences:
+The blog's tests run inside Kura's sandbox ([CRUD and the Query Builder](../data-layer/crud.md#testing-against-the-database)), which rolls back everything at the end of each test. Shigoto's statements do not go through the sandbox: a job inserted during a test is committed for real, even when the test inserts it inside `blog_repo:transaction/1`. From `test/blog_jobs_workers_SUITE.erl`:
+
+```erlang
+sandbox_does_not_hold_job_inserts(_Config) ->
+    rolled_back =
+        try
+            blog_repo:transaction(fun() ->
+                {ok, _} = shigoto:insert(#{
+                    worker => blog_publish_worker, args => #{~"post_id" => 1}
+                }),
+                throw(rolled_back)
+            end)
+        catch
+            throw:rolled_back -> rolled_back
+        end,
+    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
+```
+
+Outside the sandbox that job would be rolled back ([Transactions](background-jobs.md#transactions)). The reason is where each library looks for an open transaction. Shigoto joins a Kura transaction by asking `kura_pool_minato` for the connection the process is in a transaction on. The sandbox keeps its connection in its own table, and a `blog_repo:transaction/1` inside the sandbox becomes a savepoint on that connection without telling `kura_pool_minato`. So Shigoto finds no transaction and runs on a fresh pool connection, in autocommit. The same goes the other way: `shigoto:transaction/1` opens a real transaction on a pool connection, and Kura writes inside it go to the sandbox connection instead.
+
+Three consequences:
 
 - Each jobs suite empties the table before checking out the sandbox (a query outside the sandbox goes straight to the pool):
 
@@ -69,14 +89,27 @@ The blog's tests run inside Kura's sandbox ([CRUD and the Query Builder](../data
   ```
 
 - A worker run by `drain_queue/1` reads blog data through Kura, and the sandbox is checked out in `shared` mode, so the worker sees the posts and comments the test created even though they are never committed.
+- A test of a shared transaction, or of anything that writes Shigoto's tables and then changes them through Kura (cron's `shigoto_cron` row, in [Scheduling](scheduling.md#testing-cron)), has to run outside the sandbox. Inside it, a passing test proves nothing, and a Kura statement that touches a row Shigoto committed holds a lock inside the sandbox's transaction that Shigoto's next statement waits on. `test/blog_jobs_commit_SUITE.erl` is that suite: it never checks out the sandbox, gives its users their own names (`commit_alice`, `commit_bob`) and deletes its rows before and after every test:
 
-Because the test config runs no queues, jobs only run when a test calls `shigoto:drain_queue(Queue)`. It claims due jobs in that queue one at a time and runs them in the calling process, including jobs that become claimable along the way (a dependent whose predecessor just finished).
+  ```erlang
+  clean_up() ->
+      ok = blog_jobs_fixtures:reset_jobs(),
+      Queries = [
+          ~"DELETE FROM shigoto_cron",
+          ~"""
+          DELETE FROM audit_log WHERE table_name = 'posts' AND record_id IN (
+              SELECT id::text FROM posts WHERE user_id IN (
+                  SELECT id FROM users WHERE username IN ('commit_alice', 'commit_bob')))
+          """,
+          ~"DELETE FROM users WHERE username IN ('commit_alice', 'commit_bob')"
+      ],
+      [{ok, _} = blog_repo:query(Query, []) || Query <- Queries],
+      ok.
+  ```
 
-```admonish bug title="drain_queue/1 can crash with two due jobs in the queue"
-Shigoto 1.9.12 claims jobs with `UPDATE ... WHERE id IN (SELECT ... LIMIT n FOR UPDATE SKIP LOCKED)`. Depending on the query plan PostgreSQL picks, that can claim more than `n` jobs. On the blog's test database, with two due jobs in a queue, asking for one claimed both every time. `drain_queue/1` only expects one, so it crashes with `case_clause` and leaves both jobs `executing`. (Queue processes are affected too: they can run more jobs at once than their concurrency.)
+  Deleting the users deletes their posts and comments (the foreign keys cascade), but not the audit rows `blog_post`'s hooks wrote, so those go first. Keep such suites few and small: every row they forget is seen by the sandboxed suites that run after them.
 
-Until that is fixed, arrange for one due job per queue when you drain. That is why `job_is_discarded_after_max_attempts` creates its comment in `manual` mode: otherwise `add_comment/3` would put a second notification next to the one the test inserts.
-```
+Because the test config runs no queues, jobs only run when a test calls `shigoto:drain_queue(Queue)`. It claims due jobs in that queue and runs them in the calling process, including jobs that become claimable along the way (a dependent whose predecessor just finished).
 
 To see a real queue process at work, a test can start one on the fly. From `test/blog_jobs_ops_SUITE.erl`:
 
@@ -97,18 +130,19 @@ queue_process_runs_jobs_in_the_background(_Config) ->
     end.
 ```
 
-The four jobs suites:
+The five jobs suites:
 
 ```shell
-rebar3 ct --suite=test/blog_jobs_workers_SUITE,test/blog_jobs_ops_SUITE,test/blog_email_SUITE,test/blog_email_notifications_SUITE
+rebar3 ct --suite=test/blog_jobs_workers_SUITE,test/blog_jobs_ops_SUITE,test/blog_jobs_commit_SUITE,test/blog_email_SUITE,test/blog_email_notifications_SUITE
 ```
 
 ```
-%%% blog_jobs_workers_SUITE: ...............
-%%% blog_jobs_ops_SUITE: ........
+%%% blog_jobs_workers_SUITE: .............
+%%% blog_jobs_ops_SUITE: .......
+%%% blog_jobs_commit_SUITE: ......
 %%% blog_email_SUITE: .......
 %%% blog_email_notifications_SUITE: ...
-All 33 tests passed.
+All 36 tests passed.
 ```
 
 Failing jobs log `job failed` and `job discarded` warnings during the run; that is the retry tests doing their job.
@@ -129,7 +163,7 @@ Failing jobs log `job failed` and `job discarded` warnings during the run; that 
             executing => 0,completed => 1,retryable => 0}}}
 ```
 
-`status` is `degraded` when there are stale jobs or a queue is down, and the answer is `{error, #{status => unhealthy, ...}}` when the database cannot be reached.
+`status` is `degraded` when there are stale jobs or a queue is down, and the answer is `{error, #{status => unhealthy, ...}}` when the database cannot be reached, or while Shigoto holds its queues back because its migration has not run (`reason => migration_pending`, see [Shigoto's tables](background-jobs.md#shigotos-tables)). A readiness probe built on it therefore keeps a node out of the load balancer until its jobs can run.
 
 The blog serves it under the token-protected `/ops` prefix from [Routing](../foundations/routing.md#security). A group in `src/blog_router.erl`, before the last (static files and error pages) group:
 
@@ -238,7 +272,7 @@ After that the dev log shows them, around the email the job sent:
 [info] [2026-11-03T08:51:53.093435+00:00] unstructured_log="job completed"  ()
 ```
 
-Shigoto sets logger metadata (`shigoto_job_id`, `shigoto_worker`, `shigoto_queue`, `shigoto_attempt`) on the process that manages a job, but `perform/1` runs in a process spawned from it, which does not inherit process metadata. To tie your worker's own log lines to a job, log the id from the args.
+Shigoto sets logger metadata (`shigoto_job_id`, `shigoto_worker`, `shigoto_queue`, `shigoto_attempt`) on the process that runs a job, and `perform/1` starts with it. A `?LOG_INFO` in a worker, such as the purge worker's `purged soft-deleted posts`, therefore carries the job id and attempt without the worker passing them, and a formatter or handler that prints metadata shows which job wrote the line.
 
 ## Pruning and archiving
 
@@ -254,7 +288,11 @@ Finished jobs (completed, discarded, cancelled) stay in `shigoto_jobs` for `prun
 
 ## Encrypting job arguments
 
-Shigoto can encrypt `args` and `meta` with AES-256-GCM before storing them: set `encryption_key` to a 32-byte key, or `encryption_keys` to a list (newest first) to rotate keys. Workers see plaintext. The blog does not need it, because its jobs carry only ids; that is the better first line of defence. If a job must carry personal data, turn encryption on, and keep the key out of the code (see [Security](../production/security.md)).
+Shigoto can encrypt `args` and `meta` with AES-256-GCM before storing them: set `encryption_key` to a 32-byte key, or `encryption_keys` to a list (newest first) to rotate keys. Workers see plaintext. Cron entry args in `shigoto_cron` are encrypted the same way, and a unique job's `unique_key` (which is built from its args) is stored as a keyed hash instead of in clear, so duplicates are still found without the args being readable.
+
+The price is that the database can no longer look inside `args`. `cancel_by/1,2`, `retry_by/1,2` and `shigoto_repo:find_jobs/2` answer `{error, args_filter_unsupported_with_encryption}` for an `args` filter; filter on `worker`, `queue`, `tags` or `state` instead, or keep the job ids you need. So `cancel_by(#{worker => blog_publish_worker, args => #{~"post_id" => PostId}})` from [Scheduling](scheduling.md#scheduled-jobs) stops working when you turn encryption on.
+
+The blog does not need it, because its jobs carry only ids; that is the better first line of defence. If a job must carry personal data, turn encryption on, and keep the key out of the code (see [Security](../production/security.md)).
 
 ## Resilience
 
@@ -280,7 +318,7 @@ perform(#{~"url" := _Url}) ->
 - `concurrency/0`: at most this many running at once on this node, across queues. `global_concurrency/0` does the same across all nodes, through PostgreSQL.
 - `circuit_breaker/0`: after enough failures, stop calling a dependency that is clearly down for `wait_duration` milliseconds.
 
-A job that hits one of these limits is snoozed, not failed, so remember that [snoozes use up attempts](background-jobs.md#snoozing). `perform_job/2` skips all of them.
+A job that hits one of these limits is snoozed, not failed, so it does not use up an attempt ([Snoozing](background-jobs.md#snoozing)). `perform_job/2` skips all of them.
 
 ## Dashboards
 
