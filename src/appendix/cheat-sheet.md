@@ -470,7 +470,7 @@ E5 = hikyaku_email:attachment(E4, hikyaku_attachment:from_data(~"posts.csv", Csv
 | `hikyaku_attachment:from_path(Path)`, `from_path/2` | File on disk |
 | `hikyaku_attachment:inline(Cid, Path)` | Inline image referenced as `cid:` |
 
-There are no getters: match `#hikyaku_email{subject = S, to = To, ...}`. A mailer implements `-behaviour(hikyaku_mailer)` with `config/0` returning `#{adapter => Module, ...}`, and `hikyaku_mailer:deliver(Mailer, Email)` returns `{ok, Receipt}` or `{error, Reason}`. Adapters: `hikyaku_adapter_smtp`, `_mailgun`, `_sendgrid`, `_ses`, `_logger` (`level`), `_test` (`pid`, sends `{hikyaku_email, Email}`).
+Read fields with the getters (`hikyaku_email:subject/1`, `to/1`, ...) or match `#hikyaku_email{subject = S, to = To, ...}` (include `hikyaku/include/hikyaku.hrl`; addresses and attachments are records). A mailer implements `-behaviour(hikyaku_mailer)` with `config/0` returning `#{adapter => Module, ...}`, and `hikyaku_mailer:deliver(Mailer, Email)` returns `{ok, Receipt}` or `{error, Reason}`. Adapters: `hikyaku_adapter_smtp`, `_mailgun`, `_sendgrid`, `_ses`, `_logger` (`level`), `_test` (`pid`, sends `{hikyaku_email, Email}`).
 
 ## Shigoto jobs
 

@@ -121,14 +121,14 @@ That is a `rebar3 shell` session (output of steps 1 to 5 trimmed). The logger ad
 | `subject/2` | Set the subject |
 | `text_body/2`, `html_body/2` | Set the plain text or HTML body |
 | `attachment/2` | Append a `hikyaku_attachment` |
-| `header/3` | Add a custom header (`Key` and `Value` are binaries) |
+| `header/3` | Add a custom header (`Key` and `Value` are binaries); a reserved name such as `Reply-To` or a value with a line break raises |
 | `provider_option/3` | Store an adapter-specific option (atom key) |
 
-An address is a binary (`~"alice@example.com"`), a `{Name, Address}` tuple, or a `#hikyaku_address{}` record. All three are normalised to the record.
+An address is a binary (`~"alice@example.com"`), a `{Name, Address}` tuple, or a `#hikyaku_address{}` record. All three are normalised to the record. Each must be one bare mailbox: `~"a@x.com, b@y.com"` or a name with a line break raises `{invalid_address, ...}` when you set it, so a value from a form cannot add recipients.
 
 ### Reading an email
 
-The email is a record, `#hikyaku_email{}`, defined in `hikyaku/include/hikyaku.hrl`. Hikyaku has no getter functions; include the header and match:
+The email is a record, `#hikyaku_email{}`, defined in `hikyaku/include/hikyaku.hrl`. `hikyaku_email` has a getter for each field (`subject/1`, `to/1`, `text_body/1`, `attachments/1`, ...), but addresses and attachments come back as `#hikyaku_address{}` and `#hikyaku_attachment{}` records, so code that looks inside them needs the header anyway. In the shell:
 
 ```erlang
 8> rr(hikyaku_email).
@@ -145,7 +145,7 @@ The email is a record, `#hikyaku_email{}`, defined in `hikyaku/include/hikyaku.h
                provider_options = #{}}
 ```
 
-In a module, `-include_lib("hikyaku/include/hikyaku.hrl").` gives you the same records. The tests later in this part match on them.
+In a module, `-include_lib("hikyaku/include/hikyaku.hrl").` gives you the same records. The tests later in this part match on them, which checks several fields in one pattern.
 
 ### Validation
 
@@ -284,23 +284,17 @@ welcome_with_logo(To) ->
     hikyaku_email:attachment(E2, hikyaku_attachment:inline(~"logo", ~"priv/assets/logo.png")).
 ```
 
-```admonish bug title="Attachments with hikyaku 0.2.0: check your adapter"
-- **SMTP and SES** build the MIME message with gen_smtp's `mimemail`. With gen_smtp 1.3 (what rebar3 resolves today) the attachment's parameters are ignored: the part goes out as `Content-Disposition: inline`, without its filename and without base64 encoding. The test `smtp_attachment_loses_its_filename` in `test/blog_email_SUITE.erl` pins this.
-- **SendGrid** ignores attachments (and custom headers) entirely.
-- **Mailgun** sends attachments correctly.
-
-Plain text and HTML bodies are unaffected.
-```
+Every adapter that delivers sends attachments with their filename. Over SMTP and SES the part goes out as `Content-Disposition: attachment; filename=posts.csv`, base64-encoded; `smtp_attachment_keeps_its_filename` in `test/blog_email_SUITE.erl` builds the MIME message the SMTP adapter would send and checks that. A content type you pass yourself must be a well-formed `type/subtype` (parameters such as `; charset=utf-8` are fine); anything else, for example a value with a line break, is refused before it can reach a header.
 
 ## Adapters
 
-Each adapter reads its own keys from the map `config/0` returns. From the 0.2.0 source:
+Each adapter reads its own keys from the map `config/0` returns. From the 0.3.0 source:
 
 | Adapter | Delivers via | Keys |
 |---|---|---|
 | `hikyaku_adapter_logger` | OTP logger | `level` (default `notice`) |
 | `hikyaku_adapter_test` | a message `{hikyaku_email, Email}` | `pid` (default: the calling process) |
-| `hikyaku_adapter_smtp` | SMTP, through gen_smtp | `relay` (binary), `port` (default 587), `username`, `password`, `ssl` (`true`/`false`), `tls` (`always`, `never`, `if_available`, the default) |
+| `hikyaku_adapter_smtp` | SMTP, through gen_smtp | `relay` (binary), `port` (default 587), `username`, `password`, `ssl` (`true`/`false`), `tls` (`always`, `if_available`, `never`), `tls_options`, `no_mx_lookups` (default `false`) |
 | `hikyaku_adapter_mailgun` | Mailgun Messages API | `api_key`, `domain`, `base_url` (default `https://api.mailgun.net`; use `https://api.eu.mailgun.net` for EU accounts) |
 | `hikyaku_adapter_sendgrid` | SendGrid v3 API | `api_key` |
 | `hikyaku_adapter_ses` | Amazon SES v2 API, SigV4-signed | `access_key`, `secret_key`, `region` |
@@ -309,15 +303,19 @@ The HTTP adapters also accept `http_client`, a module with `post/3`, in place of
 
 The built-in HTTP client verifies the provider's certificate (`verify_peer` against `public_key:cacerts_get()`), and `hikyaku` already starts `inets` and `ssl`.
 
-```admonish danger title="SMTP in hikyaku 0.2.0 does not verify the relay's certificate"
-The 0.2.0 SMTP adapter passes only relay, port, credentials, `ssl` and `tls` to gen_smtp, whose STARTTLS default is not to verify the server certificate, and there is no option to change that. Someone on the network path can complete STARTTLS with any certificate and read the SMTP credentials sent right after. Upstream fixed this after 0.2.0 (the fix is not on Hex yet).
+### SMTP and TLS
 
-Until it is, prefer an HTTP adapter in production, or use SMTP only to a relay on a network you trust (for example a local MTA or a sidecar on the same host).
+`tls` defaults to `always`: the adapter requires STARTTLS and verifies the relay's certificate against the operating system's trust store, with `relay` as the name it must be valid for. A relay that does not offer STARTTLS fails the delivery instead of receiving the password and the message in clear. Two cases default to `if_available`, STARTTLS when the relay offers it: `ssl => true` (implicit TLS, usually port 465, already encrypted from the first byte) and a loopback relay (`localhost`, `127.0.0.1`) without `username`, such as a local MTA.
+
+For a relay on a private network that has no STARTTLS, say so explicitly:
+
+```erlang
+#{adapter => hikyaku_adapter_smtp, relay => ~"mailrelay.internal", port => 25, tls => if_available}
 ```
 
-```admonish warning title="Using SMTP in a release"
-hikyaku 0.2.0 does not list `gen_smtp` in its `applications`, so a release built with `rebar3 as prod release` leaves gen_smtp out and the SMTP adapter fails with `undef`. If you use SMTP, add `gen_smtp` to the blog's own `applications` list in `src/blog.app.src`.
-```
+That is a downgrade: anyone on the path can strip STARTTLS and read the session, so use it only where you trust the network itself.
+
+When `relay` is a domain, the adapter looks up its MX records and connects to those hosts, as any mail server would, falling back to `relay` itself. For a provider's submission host (`smtp.example.com`), set `no_mx_lookups => true` to connect to exactly the host you configured.
 
 A production mailer config, as a variant (Mailgun's EU region; where the key comes from is covered in the [Configuration](../production/configuration.md) chapter):
 

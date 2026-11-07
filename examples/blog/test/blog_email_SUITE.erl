@@ -10,7 +10,7 @@
     logger_adapter_logs_the_email/1,
     comment_email_escapes_html/1,
     export_email_attaches_csv/1,
-    smtp_attachment_loses_its_filename/1
+    smtp_attachment_keeps_its_filename/1
 ]).
 
 all() ->
@@ -21,7 +21,7 @@ all() ->
         logger_adapter_logs_the_email,
         comment_email_escapes_html,
         export_email_attaches_csv,
-        smtp_attachment_loses_its_filename
+        smtp_attachment_keeps_its_filename
     ].
 
 init_per_suite(Config) ->
@@ -105,7 +105,7 @@ export_email_attaches_csv(_Config) ->
     Expected = <<(integer_to_binary(PostId))/binary, ",\"Say \"\"hello\"\", world\",draft,">>,
     {0, _} = binary:match(Row, Expected).
 
-smtp_attachment_loses_its_filename(_Config) ->
+smtp_attachment_keeps_its_filename(_Config) ->
     E0 = hikyaku_email:from(hikyaku_email:new(), {~"Nova Blog", ~"noreply@blog.test"}),
     E1 = hikyaku_email:to(E0, ~"alice@example.com"),
     E2 = hikyaku_email:text_body(hikyaku_email:subject(E1, ~"Export"), ~"Attached."),
@@ -116,6 +116,6 @@ smtp_attachment_loses_its_filename(_Config) ->
     {_, _} = binary:match(Message, ~"Content-Type: multipart/mixed"),
     {_, _} = binary:match(Message, ~"From: Nova Blog <noreply@blog.test>"),
     {_, _} = binary:match(Message, ~"Content-Type: text/csv"),
-    nomatch = binary:match(Message, ~"filename"),
-    nomatch = binary:match(Message, ~"Content-Disposition: attachment"),
-    nomatch = binary:match(Message, ~"base64").
+    {_, _} = binary:match(Message, ~"Content-Disposition: attachment"),
+    {_, _} = binary:match(Message, ~"filename=posts.csv"),
+    {_, _} = binary:match(Message, ~"Content-Transfer-Encoding: base64").
