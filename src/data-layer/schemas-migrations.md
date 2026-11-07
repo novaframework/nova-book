@@ -174,9 +174,7 @@ The hook does not generate anything when nothing changed:
 ===> kura: schemas up to date
 ```
 
-```admonish warning title="Run rebar3 fmt after a migration is generated"
-Generated migrations are not formatted with erlfmt. The blog's erlfmt configuration covers `src/**`, so `rebar3 fmt --check` fails right after a new migration appears. Run `rebar3 fmt` once and commit the formatted file. The listings in this book are formatted.
-```
+The generated file is already formatted with erlfmt, using the project's `print_width`, so `rebar3 fmt --check` passes right after a compile writes one.
 
 Commit migrations like any other source file. They are the history of your database.
 

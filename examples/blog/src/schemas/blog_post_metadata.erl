@@ -1,10 +1,8 @@
 -module(blog_post_metadata).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0]).
+-export([fields/0]).
 -export([changeset/2]).
-
-table() -> ~"_embedded".
 
 fields() ->
     [

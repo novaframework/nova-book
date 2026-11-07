@@ -21,7 +21,6 @@ fields() ->
         },
         #kura_field{name = user_id, type = bigint, nullable = false},
         #kura_field{name = published_at, type = utc_datetime},
-        #kura_field{name = metadata, type = jsonb},
         #kura_field{name = lock_version, type = integer, nullable = false, default = 1},
         #kura_field{name = deleted_at, type = utc_datetime},
         #kura_field{name = inserted_at, type = utc_datetime},

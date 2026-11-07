@@ -68,10 +68,7 @@ fields() ->
     ].
 
 indexes() ->
-    [
-        {[post_id, tag_id], #{unique => true}},
-        {[tag_id], #{}}
-    ].
+    [{[tag_id], #{}}].
 
 associations() ->
     [
@@ -92,7 +89,7 @@ associations() ->
     ].
 ```
 
-There is no `id` column. `key/0` declares a composite primary key, and the unique index stops a tag from being attached twice. The two `belongs_to` associations give the generator its foreign keys; deleting a post or a tag removes the link rows.
+There is no `id` column. `key/0` declares a composite primary key on `(post_id, tag_id)`, which also stops a tag from being attached to a post twice. Its index serves lookups by post; the extra index on `tag_id` serves lookups the other way, "every post with this tag". The two `belongs_to` associations give the generator its foreign keys; deleting a post or a tag removes the link rows.
 
 ## Tags on posts
 
@@ -110,13 +107,9 @@ Add the other side of the relationship to `blog_post:associations/0`:
 
 `join_keys` is `{KeyToThisSchema, KeyToTheOtherSchema}` in the join table, which is why it is flipped in `blog_tag`.
 
-## Generating the migrations
+## Generating the migration
 
-```admonish warning title="Compile the tag schema before the join schema"
-In one compile, the generator creates new tables in alphabetical order, not in dependency order. With `blog_tag` and `blog_post_tag` added together it emits `create_table post_tags` before `create_table tags`, and the migration fails because `tags` does not exist yet. Add `blog_tag` first and compile, then add `blog_post_tag` and compile again. Each step is its own migration.
-```
-
-The first compile, with `blog_tag` and the metadata column from the second half of this chapter, generates `m20261103073021_update_schema.erl`:
+Compile once both schemas are in place (with the metadata embed from the second half of this chapter). The generator orders new tables by their foreign keys, so `tags` comes before `post_tags`, and `m20261103073021_update_schema.erl` holds all of it:
 
 ```erlang
 up() ->
@@ -126,38 +119,33 @@ up() ->
             #kura_column{name = name, type = string, nullable = false},
             #kura_column{name = inserted_at, type = utc_datetime}
         ]},
+        {create_table, ~"post_tags",
+            [
+                #kura_column{
+                    name = post_id,
+                    type = bigint,
+                    nullable = false,
+                    references = {~"posts", id},
+                    on_delete = cascade
+                },
+                #kura_column{
+                    name = tag_id,
+                    type = bigint,
+                    nullable = false,
+                    references = {~"tags", id},
+                    on_delete = cascade
+                }
+            ],
+            [{primary_key, [post_id, tag_id]}]},
         {alter_table, ~"posts", [
             {add_column, #kura_column{name = metadata, type = jsonb}}
         ]},
+        {create_index, ~"post_tags", [tag_id], #{}},
         {create_index, ~"tags", [name], #{unique => true}}
     ].
 ```
 
-The second, after adding `blog_post_tag`, generates `m20261103073031_create_post_tags.erl`:
-
-```erlang
-up() ->
-    [
-        {create_table, ~"post_tags", [
-            #kura_column{
-                name = post_id,
-                type = bigint,
-                nullable = false,
-                references = {~"posts", id},
-                on_delete = cascade
-            },
-            #kura_column{
-                name = tag_id,
-                type = bigint,
-                nullable = false,
-                references = {~"tags", id},
-                on_delete = cascade
-            }
-        ]},
-        {create_index, ~"post_tags", [post_id, tag_id], #{unique => true}},
-        {create_index, ~"post_tags", [tag_id], #{}}
-    ].
-```
+`create_table/3` takes table options as its third element; `{primary_key, Columns}` is the composite key from `key/0`.
 
 ## Tagging posts with put_assoc
 
@@ -251,10 +239,8 @@ Each post can carry SEO metadata: a title and description for search engines, a 
 -module(blog_post_metadata).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0]).
+-export([fields/0]).
 -export([changeset/2]).
-
-table() -> ~"_embedded".
 
 fields() ->
     [
@@ -274,31 +260,20 @@ changeset(Data, Params) ->
     kura_changeset:validate_number(CS3, reading_minutes, [{greater_than, 0}]).
 ```
 
-It looks like a schema, with fields and a changeset, but it has no table of its own.
-
-```admonish warning title="No -behaviour(kura_schema) on embedded schemas"
-Kura's guide describes an embedded schema as a regular `kura_schema` module with `table() -> ~"_embedded"`. The `rebar3_kura` compile hook, however, treats every module with `-behaviour(kura_schema)` as a table and would generate `create_table "_embedded"`. Leave the behaviour attribute out. Keep `table/0`: `kura_changeset:cast/4` calls it.
-```
+It looks like a schema, with fields and a changeset, but it has no table of its own, so it has no `table/0` and no `-behaviour(kura_schema)`: `fields/0` is all that `kura_changeset:cast/4` needs from it.
 
 ### Embedding it in posts
 
-In `blog_post.erl`, declare the column as a `jsonb` field and the embed in a new `embeds/0` callback:
+In `blog_post.erl`, declare the embed in a new `embeds/0` callback:
 
 ```erlang
 -export([table/0, fields/0, indexes/0, associations/0, embeds/0]).
-
-fields() ->
-    [
-        ...
-        #kura_field{name = metadata, type = jsonb},
-        ...
-    ].
 
 embeds() ->
     [#kura_embed{name = metadata, type = embeds_one, schema = blog_post_metadata}].
 ```
 
-`embeds_one` holds one map, `embeds_many` a list. The `jsonb` field is what the migration generator sees; it reads only `fields/0`, so an embed declared only in `embeds/0` gets no column. At runtime the embed declaration wins and the field is cast and loaded through `blog_post_metadata`.
+`embeds_one` holds one map, `embeds_many` a list. The embed is its own column: the migration generator adds a `jsonb` column named `metadata` for it, as the migration above shows, and the value is cast and loaded through `blog_post_metadata`. It does not go in `fields/0`.
 
 The post changeset casts the embed with `cast_embed/3`, again with an explicit changeset function:
 
