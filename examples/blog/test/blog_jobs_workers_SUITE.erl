@@ -127,8 +127,13 @@ snoozed_job_is_rescheduled(Config) ->
     ),
     ok = shigoto:drain_queue(~"mailers"),
     [#{id := JobId}] = shigoto_testing:all_enqueued(#{worker => blog_comment_notification_worker}),
-    {ok, #{state := ~"available", attempt := 1, errors := ~"[]", scheduled_at := At}} =
-        shigoto:get_job(JobId),
+    {ok, #{
+        state := ~"available",
+        attempt := 1,
+        max_attempts := 6,
+        errors := ~"[]",
+        scheduled_at := At
+    }} = shigoto:get_job(JobId),
     Delay = seconds_from_now(At),
     true = Delay > 50 andalso Delay =< 60.
 
