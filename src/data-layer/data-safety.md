@@ -152,15 +152,15 @@ and can be restored:
       deleted_at => undefined}}
 ```
 
-`all/1`, `one/1`, `get/2`, `kura_paginator:paginate/3`, `update_all/2` and `delete_all/1` add `deleted_at IS NULL` automatically. Wrap a query in `kura_query:with_deleted/1` to see every row, or `kura_query:only_deleted/1` for the deleted ones, as `restore_post/1` and `purge_deleted/1` from the [previous chapter](transactions-bulk.md#delete_all) do.
+`all/1`, `one/1`, `get/2`, `count/1`, `aggregate/2`, `kura_paginator:paginate/3`, `kura_stream:stream/3,4`, `update_all/2` and `delete_all/1` add `deleted_at IS NULL` automatically. Wrap a query in `kura_query:with_deleted/1` to see every row, or `kura_query:only_deleted/1` for the deleted ones, as `restore_post/1` and `purge_deleted/1` from the [previous chapter](transactions-bulk.md#delete_all) do.
 
-````admonish warning title="Not every function filters soft-deleted rows"
-`count/1`, `aggregate/2`, `kura_stream:stream/3,4` and raw `query/2` see deleted rows. That is why `blog_stats` builds its queries from `live_posts()`, which adds `{deleted_at, is_nil}` itself, and why the raw SQL in `top_commented/1` says `WHERE p.deleted_at IS NULL`. `test/blog_data_safety_SUITE.erl` pins this, right after soft-deleting the only post:
+````admonish warning title="Raw SQL and nested queries see deleted rows"
+The filter is added for the schema in the outer query's `from` only. A query inside a CTE or a union, and raw SQL through `query/2`, see every row. That is why the CTEs in `blog_stats` start from `live_posts()`, which adds `{deleted_at, is_nil}` itself, and why the raw SQL in `top_commented/1` says `WHERE p.deleted_at IS NULL`. `test/blog_data_safety_SUITE.erl` checks the automatic filter right after soft-deleting the only post:
 
 ```erlang
 {ok, []} = blog_repo:all(kura_query:from(blog_post)),
-{ok, 1} = blog_repo:count(kura_query:from(blog_post)),
-{ok, 0} = blog_repo:count(kura_query:where(kura_query:from(blog_post), {deleted_at, is_nil})),
+{ok, 0} = blog_repo:count(kura_query:from(blog_post)),
+{ok, 1} = blog_repo:count(kura_query:with_deleted(kura_query:from(blog_post))),
 ```
 ````
 

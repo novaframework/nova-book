@@ -4,13 +4,13 @@ The blog needs more than "list posts": counts for a dashboard, an activity feed,
 
 ```erlang
 published() ->
-    kura_query:where(live_posts(), {status, ~"published"}).
+    kura_query:where(kura_query:from(blog_post), {status, ~"published"}).
 
 live_posts() ->
     kura_query:where(kura_query:from(blog_post), {deleted_at, is_nil}).
 ```
 
-`deleted_at` arrives with soft deletes in the [Data Safety](data-safety.md) chapter. The explicit filter is there because some of the functions below (counts, aggregates, streams, raw SQL) do not apply Kura's automatic soft-delete filter.
+`deleted_at` arrives with soft deletes in the [Data Safety](data-safety.md) chapter. Kura hides soft-deleted rows by itself, but only for the schema in the outer query's `from`. A query nested inside a CTE or a union is not checked, so those start from `live_posts()`, which filters explicitly.
 
 The outputs were captured on a development database with five posts by Alice and Bob and a handful of comments.
 
@@ -79,9 +79,7 @@ post_titles_with_authors() ->
      #{title => <<"Supervision trees">>,username => <<"alice">>}]}
 ```
 
-```admonish warning title="Columns are not qualified with the table"
-`select`, `where`, `order_by` and `group_by` write bare column names. After a join, a name that exists in both tables (`id`, `inserted_at`, `updated_at`) is ambiguous and PostgreSQL rejects the query. `select [id, title, username]` on the join above compiles to `SELECT "id", "title", "username" FROM "posts" INNER JOIN "users" ...`. Select only columns with unique names, or use a fragment with qualified names.
-```
+After a join, Kura qualifies the columns of the `from` schema with its table, so names that both tables have (`id`, `inserted_at`) are not ambiguous. `select [id, title, username]` on the join above compiles to `SELECT "posts"."id", "posts"."title", "username" FROM "posts" INNER JOIN "users" ...`. A column that only the joined schema has, like `username`, stays bare. To select a joined column whose name the `from` schema also has, such as `users.inserted_at`, use a fragment with the qualified name.
 
 When you only need the related rows, not one combined row, a preload is usually simpler than a join.
 
@@ -130,7 +128,7 @@ latest_post_per_author() ->
     ]),
     Q = kura_query:with_cte(kura_query:from(~"ranked_posts"), ~"ranked_posts", Ranked),
     Q1 = kura_query:where(Q, {position, 1}),
-    run(kura_query:order_by(Q1, [{user_id, asc}])).
+    blog_repo:all(kura_query:order_by(Q1, [{user_id, asc}])).
 ```
 
 ```erlang
@@ -141,17 +139,7 @@ latest_post_per_author() ->
        user_id => 2}]}
 ```
 
-`from(~"ranked_posts")` selects from the CTE by name instead of from a schema. That trips up `blog_repo:all/1` in Kura 2.25, so the blog compiles the query itself and runs the SQL through `query/2`:
-
-```erlang
-run(Query) ->
-    {SQL, Params} = kura_query_compiler:to_sql(blog_repo, Query),
-    blog_repo:query(SQL, Params).
-```
-
-```admonish bug title="blog_repo:all/1 crashes on a query from a CTE"
-`all/1` looks up the `from` schema to decide whether to add the soft-delete filter, and calls `fields/0` on the CTE's name: `badarg` in `erlang:apply(<<"ranked_posts">>, fields, [])`. Compiling with `kura_query_compiler:to_sql/2` and running the SQL with `query/2` works. Because that path skips the automatic soft-delete filter, the CTE starts from `live_posts()`.
-```
+`from(~"ranked_posts")` selects from the CTE by name instead of from a schema. The rows come back as maps keyed by the names given in `select_expr/2`, with the values as PostgreSQL returned them: there is no schema to load them through. The outer query has no schema either, so Kura adds no soft-delete filter anywhere; that is why the CTE starts from `live_posts()`.
 
 ## Unions
 
@@ -168,7 +156,7 @@ activity_feed(Limit) ->
     Feed = kura_query:with_cte(
         kura_query:from(~"feed"), ~"feed", kura_query:union_all(Posts, Comments)
     ),
-    run(kura_query:limit(kura_query:order_by(Feed, [{at, desc}]), Limit)).
+    blog_repo:all(kura_query:limit(kura_query:order_by(Feed, [{at, desc}]), Limit)).
 ```
 
 ```erlang

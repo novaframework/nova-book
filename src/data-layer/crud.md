@@ -123,9 +123,7 @@ Conditions:
 {ok,[#{id => 4,status => published,title => <<"Pattern matching">>, ...}]}
 ```
 
-```admonish warning title="Enums are binaries in where clauses"
-Casting turns `~"published"` into the atom `published`, and loaded rows have atoms. Values in `where` are *not* converted through the field type, so compare enums with binaries: `{status, ~"published"}`. `{status, published}` crashes in the driver.
-```
+Casting turns `~"published"` into the atom `published`, and loaded rows have atoms. A value in `where` that is compared to a field of the `from` schema goes through the field's type too, so `{status, published}` and `{status, ~"published"}` are the same condition. The blog writes binaries, since that is what arrives from a request. Never turn request input into an atom to build a condition: atoms are never garbage collected.
 
 ## A context module
 

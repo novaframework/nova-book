@@ -57,7 +57,7 @@ latest_post_per_author() ->
     ]),
     Q = kura_query:with_cte(kura_query:from(~"ranked_posts"), ~"ranked_posts", Ranked),
     Q1 = kura_query:where(Q, {position, 1}),
-    run(kura_query:order_by(Q1, [{user_id, asc}])).
+    blog_repo:all(kura_query:order_by(Q1, [{user_id, asc}])).
 
 activity_feed(Limit) ->
     Posts = kura_query:select_expr(live_posts(), [
@@ -69,7 +69,7 @@ activity_feed(Limit) ->
     Feed = kura_query:with_cte(
         kura_query:from(~"feed"), ~"feed", kura_query:union_all(Posts, Comments)
     ),
-    run(kura_query:limit(kura_query:order_by(Feed, [{at, desc}]), Limit)).
+    blog_repo:all(kura_query:limit(kura_query:order_by(Feed, [{at, desc}]), Limit)).
 
 commenters(#{id := PostId}) ->
     Q = kura_query:where(kura_query:from(blog_comment), {post_id, PostId}),
@@ -112,11 +112,7 @@ top_commented(Limit) ->
     ).
 
 published() ->
-    kura_query:where(live_posts(), {status, ~"published"}).
+    kura_query:where(kura_query:from(blog_post), {status, ~"published"}).
 
 live_posts() ->
     kura_query:where(kura_query:from(blog_post), {deleted_at, is_nil}).
-
-run(Query) ->
-    {SQL, Params} = kura_query_compiler:to_sql(blog_repo, Query),
-    blog_repo:query(SQL, Params).
