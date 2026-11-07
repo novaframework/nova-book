@@ -101,11 +101,11 @@ put_normalized_email(CS, undefined) ->
 put_normalized_email(CS, Email) ->
     case normalize_email(Email) of
         {ok, Normalized} -> put_email(CS, Normalized);
-        {error, invalid_encoding} -> kura_changeset:add_error(CS, email, ~"is not valid UTF-8")
+        {error, invalid_encoding} -> CS
     end.
 
-put_email(#kura_changeset{data = #{email := Email}, changes = Changes} = CS, Email) ->
-    CS#kura_changeset{changes = maps:remove(email, Changes)};
+put_email(#kura_changeset{data = #{email := Email}} = CS, Email) ->
+    kura_changeset:delete_change(CS, email);
 put_email(CS, Email) ->
     kura_changeset:put_change(CS, email, Email).
 
@@ -120,23 +120,8 @@ validate_username(CS) ->
     kura_changeset:validate_format(CS1, username, ~"^[a-z0-9_]+\\z").
 
 validate_password(CS) ->
-    CS1 = validate_password_length(CS, kura_changeset:get_change(CS, password)),
+    CS1 = kura_changeset:validate_length(CS, password, [{min, 12}, {max, 1024}]),
     kura_changeset:validate_confirmation(CS1, password).
-
-validate_password_length(CS, undefined) ->
-    CS;
-validate_password_length(CS, Password) ->
-    case unicode:characters_to_binary(Password) of
-        Password -> check_password_length(CS, length(unicode:characters_to_list(Password)));
-        _ -> kura_changeset:add_error(CS, password, ~"is not valid UTF-8")
-    end.
-
-check_password_length(CS, Length) when Length < 12 ->
-    kura_changeset:add_error(CS, password, ~"should be at least 12 character(s)");
-check_password_length(CS, Length) when Length > 1024 ->
-    kura_changeset:add_error(CS, password, ~"should be at most 1024 character(s)");
-check_password_length(CS, _Length) ->
-    CS.
 
 hash_password(#kura_changeset{valid = true} = CS) ->
     case kura_changeset:get_change(CS, password) of

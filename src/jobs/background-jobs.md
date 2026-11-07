@@ -73,20 +73,21 @@ Nothing runs in the background during tests, so a test decides exactly when jobs
 
 Shigoto creates its tables itself: `shigoto_app` calls `shigoto_migration:up/1` on the pool every time it starts. The migration is idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`), and a newer Shigoto adds its new columns the same way, so there is nothing to keep in step with Kura's migrations.
 
-There is one catch, on the very first boot. Shigoto starts before the blog, and the blog is where Kura's migrator runs and creates the database if it is missing. On a brand new database Shigoto's migration therefore runs against a database that does not exist yet. `shigoto_migration:up/1` does not report that: it ignores the result of every statement and returns `ok`. The node boots, and has no job tables.
+There is one catch, on the very first boot. Shigoto starts before the blog, and the blog is where Kura's migrator runs and creates the database if it is missing. On a brand new database Shigoto's migration therefore runs against a database that does not exist yet. Shigoto tries 5 times, 1 to 5 seconds apart, then starts without its queues and logs `shigoto_migration_pending` at error level. From then on it retries every 30 seconds; meanwhile `shigoto:health/0` reports `migration_pending` and no jobs run.
 
-The blog calls the migration once more, after Kura's, in `src/blog_app.erl`:
+The blog runs the migration itself once Kura's has created the database, then tells Shigoto to retry at once, in `src/blog_app.erl`:
 
 ```erlang
 start(_StartType, _StartArgs) ->
     {ok, _} = kura_migrator:migrate(blog_repo),
     ok = shigoto_migration:up(blog_repo),
+    _ = shigoto_migrator:retry_now(),
     ok = blog_jobs:schedule_maintenance(),
     ok = nova_handlers:register_handler(text, fun blog_text_handler:handle/3),
     blog_sup:start_link().
 ```
 
-By then the database exists. On every later boot the second call finds everything in place and does nothing. (`blog_jobs:schedule_maintenance/0` is the [recurring purge](scheduling.md#recurring-jobs).)
+`shigoto_migration:up/1` returns `{error, Reason}` when a statement fails, so the `ok =` match stops the boot if the tables cannot be created. `shigoto_migrator:retry_now/0` returns `not_running` when nothing is pending, which is every boot after the first, so its result is ignored. On the first boot the queues start a moment after `blog_app:start/2` returns. The five attempts before that still cost a few seconds, and the error report is expected; the `shigoto_migration_completed` notice follows it. (`blog_jobs:schedule_maintenance/0` is the [recurring purge](scheduling.md#recurring-jobs).)
 
 Why not a Kura migration that runs Shigoto's DDL? It would freeze the schema of whichever Shigoto version you had when you wrote it, while Shigoto expects to upgrade its own tables on boot. Running Shigoto's own migration at boot keeps that working.
 

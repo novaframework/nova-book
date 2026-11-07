@@ -277,7 +277,7 @@ CS4 = kura_changeset:cast_embed(CS3, metadata, #{with => fun blog_post_metadata:
 | Function | Purpose |
 |---|---|
 | `cast(Schema \| Types, Data, Params, Fields)` | Start a changeset; a types map makes it schemaless |
-| `validate_required/2`, `validate_format/3`, `validate_length/3` | Presence, regex, length (`min`, `max`, `is`; counts bytes) |
+| `validate_required/2`, `validate_format/3`, `validate_length/3` | Presence, regex, length (`min`, `max`, `is`; counts code points, bytes on `binary` fields) |
 | `validate_number/3` | `greater_than`, `less_than`, `greater_than_or_equal_to`, `less_than_or_equal_to`, `equal_to` |
 | `validate_inclusion/3`, `validate_exclusion/3`, `validate_subset/3` | Value in / not in a list |
 | `validate_confirmation/2,3` | `<field>_confirmation` matches |
