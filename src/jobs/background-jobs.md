@@ -367,7 +367,7 @@ Shigoto's jobs live in the blog's database, on the blog's pool, so a job can com
 - A job inserted inside `blog_repo:transaction/1` (or a `kura_multi`) runs on that transaction's connection. It commits with the transaction, or disappears with it.
 - Kura writes inside `shigoto:transaction/1` join Shigoto's transaction, because Shigoto opens it through Kura's driver.
 
-The tests are in `test/blog_jobs_commit_SUITE.erl`. A job inserted in a Kura transaction that rolls back is gone:
+The tests are in `test/blog_jobs_workers_SUITE.erl`. A job inserted in a Kura transaction that rolls back is gone:
 
 ```erlang
 job_rolls_back_with_a_kura_transaction(_Config) ->
@@ -392,16 +392,16 @@ kura_write_rolls_back_with_a_shigoto_transaction(_Config) ->
     rolled_back =
         try
             shigoto:transaction(fun() ->
-                _ = blog_data_fixtures:user(~"commit_alice"),
+                _ = blog_data_fixtures:user(~"carol"),
                 throw(rolled_back)
             end)
         catch
             throw:rolled_back -> rolled_back
         end,
-    {error, not_found} = blog_repo:get_by(blog_user, [{username, ~"commit_alice"}]).
+    {error, not_found} = blog_repo:get_by(blog_user, [{username, ~"carol"}]).
 ```
 
-The suite runs outside Kura's test sandbox and cleans up after itself; [Operations](operations.md#the-database-and-the-sandbox) explains why. Inside the sandbox, neither of these holds.
+Both run inside Kura's test sandbox. Shigoto runs its statements on the sandbox's connection, and a transaction there becomes a savepoint, so a rollback behaves as it does in production ([Operations](operations.md#the-database-and-the-sandbox)).
 
 `shigoto:transaction/1` also groups job inserts on their own. From `test/blog_jobs_workers_SUITE.erl`:
 

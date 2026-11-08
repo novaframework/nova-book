@@ -115,7 +115,7 @@ The retention period is in the cron entry's args, not in the worker, so changing
 
 The test config runs no queues and has no cron entries, and you do not want a test to wait for 03:00. `shigoto_cron:schedule_once/0` runs one scheduling pass in the calling process, right now, and inserts the jobs that are due. The tests set an entry, run a pass and look at the jobs table.
 
-They live in `test/blog_jobs_commit_SUITE.erl`, which runs outside Kura's sandbox: a pass writes the `shigoto_cron` table on its own connection and commits, and the second test changes that row afterwards ([Operations](operations.md#the-database-and-the-sandbox) explains why that cannot happen inside the sandbox). The suite deletes its jobs and cron rows itself, before and after every test.
+They live in `test/blog_jobs_ops_SUITE.erl`. A pass run from the test process uses the test's sandbox connection, like every Shigoto call a test makes, so the jobs and the `shigoto_cron` row it writes are rolled back when the test checks in ([Operations](operations.md#the-database-and-the-sandbox)). `end_per_testcase/2` removes the entry from the config.
 
 An entry due every minute is scheduled once, however many passes run in that minute, and goes to the worker's queue:
 

@@ -510,7 +510,7 @@ perform(#{~"comment_id" := CommentId}) ->
 | `shigoto_cron:schedule_once()` | `ok`, `retry` or `{error, _}`; one cron pass now, for tests |
 | `shigoto_migration:up(Repo)` | `ok` or `{error, Reason}` |
 
-Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `tags`, `scheduled_at`, `meta`, `depends_on`, `batch`. Config: `{shigoto, [{repo, blog_repo}, {queues, [{~"default", 10}]}, {cron, [{Name, ~"0 3 * * *", Worker, Args}]}]}`. A job inserted inside `blog_repo:transaction/1` or a `kura_multi` commits or rolls back with it (not inside `kura_sandbox`). Cron: one node per minute, minute from PostgreSQL, catch-up of at most 60 minutes, no backfill for a new entry, jobs go to the worker's `queue/0`.
+Job keys: `worker`, `args` (binary keys), `queue`, `priority`, `max_attempts`, `tags`, `scheduled_at`, `meta`, `depends_on`, `batch`. Config: `{shigoto, [{repo, blog_repo}, {queues, [{~"default", 10}]}, {cron, [{Name, ~"0 3 * * *", Worker, Args}]}]}`. A job inserted inside `blog_repo:transaction/1` or a `kura_multi` commits or rolls back with it, also inside `kura_sandbox`. Cron: one node per minute, minute from PostgreSQL, catch-up of at most 60 minutes, no backfill for a new entry, jobs go to the worker's `queue/0`.
 
 ## Testing
 

@@ -50,79 +50,39 @@ testing_mode_needs_the_confirmation_key(_Config) ->
 
 ### The database and the sandbox
 
-The blog's tests run inside Kura's sandbox ([CRUD and the Query Builder](../data-layer/crud.md#testing-against-the-database)), which rolls back everything at the end of each test. Shigoto's statements do not go through the sandbox: a job inserted during a test is committed for real, even when the test inserts it inside `blog_repo:transaction/1`. From `test/blog_jobs_workers_SUITE.erl`:
+The blog's tests run inside Kura's sandbox ([CRUD and the Query Builder](../data-layer/crud.md#testing-against-the-database)), which rolls back everything at the end of each test. Shigoto's statements run on the sandbox's connection too, so a job a test inserts is rolled back with the test's rows, and the jobs suites have nothing to clean up. A `shigoto:transaction/1` inside the sandbox becomes a savepoint, as `blog_repo:transaction/1` does, so the transaction tests in [Transactions](background-jobs.md#transactions) run there and mean what they say.
+
+Because the test config runs no queues, jobs only run when a test calls `shigoto:drain_queue(Queue)`. It claims due jobs in that queue and runs them in the calling process, including jobs that become claimable along the way (a dependent whose predecessor just finished). The sandbox is checked out in `shared` mode, so a worker run that way reads the posts and comments the test created through Kura, even though they are never committed.
+
+Shigoto's own processes stay out of the sandbox on purpose: queue processes, the cron scheduler, the pruner, and the workers they run. Inside one transaction that never commits, `FOR UPDATE SKIP LOCKED` and the advisory locks they rely on stop working and `now()` stops moving. So a queue process never sees a job a sandboxed test inserted. To watch a real queue process at work, a test has to run without the sandbox, the way production does. `test/blog_jobs_queue_SUITE.erl` is that suite. It never checks out the sandbox, gives its users their own names (`queue_alice`, `queue_bob`) and deletes its rows before and after every test:
 
 ```erlang
-sandbox_does_not_hold_job_inserts(_Config) ->
-    rolled_back =
-        try
-            blog_repo:transaction(fun() ->
-                {ok, _} = shigoto:insert(#{
-                    worker => blog_publish_worker, args => #{~"post_id" => 1}
-                }),
-                throw(rolled_back)
-            end)
-        catch
-            throw:rolled_back -> rolled_back
-        end,
-    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
+clean_up() ->
+    ok = blog_jobs_fixtures:reset_jobs(),
+    Queries = [
+        ~"""
+        DELETE FROM audit_log WHERE table_name = 'posts' AND record_id IN (
+            SELECT id::text FROM posts WHERE user_id IN (
+                SELECT id FROM users WHERE username IN ('queue_alice', 'queue_bob')))
+        """,
+        ~"DELETE FROM users WHERE username IN ('queue_alice', 'queue_bob')"
+    ],
+    [{ok, _} = blog_repo:query(Query, []) || Query <- Queries],
+    ok.
 ```
 
-Outside the sandbox that job would be rolled back ([Transactions](background-jobs.md#transactions)). The reason is where each library looks for an open transaction. Shigoto joins a Kura transaction by asking `kura_pool_minato` for the connection the process is in a transaction on. The sandbox keeps its connection in its own table, and a `blog_repo:transaction/1` inside the sandbox becomes a savepoint on that connection without telling `kura_pool_minato`. So Shigoto finds no transaction and runs on a fresh pool connection, in autocommit. The same goes the other way: `shigoto:transaction/1` opens a real transaction on a pool connection, and Kura writes inside it go to the sandbox connection instead.
-
-Three consequences:
-
-- Each jobs suite empties the table before checking out the sandbox (a query outside the sandbox goes straight to the pool):
-
-  ```erlang
-  reset_jobs() ->
-      {ok, _} = blog_repo:query(~"DELETE FROM shigoto_jobs", []),
-      ok.
-  ```
-
-  ```erlang
-  init_per_testcase(_Case, Config) ->
-      ok = blog_jobs_fixtures:reset_jobs(),
-      blog_jobs_fixtures:capture_mail(),
-      blog_data_fixtures:checkout(),
-      ...
-  ```
-
-- A worker run by `drain_queue/1` reads blog data through Kura, and the sandbox is checked out in `shared` mode, so the worker sees the posts and comments the test created even though they are never committed.
-- A test of a shared transaction, or of anything that writes Shigoto's tables and then changes them through Kura (cron's `shigoto_cron` row, in [Scheduling](scheduling.md#testing-cron)), has to run outside the sandbox. Inside it, a passing test proves nothing, and a Kura statement that touches a row Shigoto committed holds a lock inside the sandbox's transaction that Shigoto's next statement waits on. `test/blog_jobs_commit_SUITE.erl` is that suite: it never checks out the sandbox, gives its users their own names (`commit_alice`, `commit_bob`) and deletes its rows before and after every test:
-
-  ```erlang
-  clean_up() ->
-      ok = blog_jobs_fixtures:reset_jobs(),
-      Queries = [
-          ~"DELETE FROM shigoto_cron",
-          ~"""
-          DELETE FROM audit_log WHERE table_name = 'posts' AND record_id IN (
-              SELECT id::text FROM posts WHERE user_id IN (
-                  SELECT id FROM users WHERE username IN ('commit_alice', 'commit_bob')))
-          """,
-          ~"DELETE FROM users WHERE username IN ('commit_alice', 'commit_bob')"
-      ],
-      [{ok, _} = blog_repo:query(Query, []) || Query <- Queries],
-      ok.
-  ```
-
-  Deleting the users deletes their posts and comments (the foreign keys cascade), but not the audit rows `blog_post`'s hooks wrote, so those go first. Keep such suites few and small: every row they forget is seen by the sandboxed suites that run after them.
-
-Because the test config runs no queues, jobs only run when a test calls `shigoto:drain_queue(Queue)`. It claims due jobs in that queue and runs them in the calling process, including jobs that become claimable along the way (a dependent whose predecessor just finished).
-
-To see a real queue process at work, a test can start one on the fly. From `test/blog_jobs_ops_SUITE.erl`:
+`reset_jobs/0` in `test/blog_jobs_fixtures.erl` is a `DELETE FROM shigoto_jobs`. Deleting the users deletes their posts and comments (the foreign keys cascade), but not the audit rows `blog_post`'s hooks wrote, so those go first. The test starts a queue on the fly:
 
 ```erlang
 queue_process_runs_jobs_in_the_background(_Config) ->
-    Alice = blog_data_fixtures:user(~"alice"),
-    Bob = blog_data_fixtures:user(~"bob"),
+    Alice = blog_data_fixtures:user(~"queue_alice"),
+    Bob = blog_data_fixtures:user(~"queue_bob"),
     Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Hello"}),
     ok = application:set_env(shigoto, poll_interval, 100),
     {ok, _Pid} = shigoto:add_queue(~"mailers", 2),
     try
         {ok, _} = blog_posts:add_comment(Post, Bob, #{~"body" => ~"Hi"}),
-        #hikyaku_email{to = [#hikyaku_address{address = ~"alice@example.com"}]} =
+        #hikyaku_email{to = [#hikyaku_address{address = ~"queue_alice@example.com"}]} =
             blog_jobs_fixtures:receive_email()
     after
         ok = shigoto:remove_queue(~"mailers"),
@@ -130,19 +90,23 @@ queue_process_runs_jobs_in_the_background(_Config) ->
     end.
 ```
 
+Keep such suites few and small: every row they forget is seen by the sandboxed suites that run after them.
+
+The same rule applies to a worker's own process. A worker that `drain_queue/1` runs reads and writes through the sandbox only because the checkout is shared. With a plain `kura_sandbox:checkout(blog_repo)`, its queries would go to the pool, outside the test's transaction.
+
 The five jobs suites:
 
 ```shell
-rebar3 ct --suite=test/blog_jobs_workers_SUITE,test/blog_jobs_ops_SUITE,test/blog_jobs_commit_SUITE,test/blog_email_SUITE,test/blog_email_notifications_SUITE
+rebar3 ct --suite=test/blog_jobs_workers_SUITE,test/blog_jobs_ops_SUITE,test/blog_jobs_queue_SUITE,test/blog_email_SUITE,test/blog_email_notifications_SUITE
 ```
 
 ```
-%%% blog_jobs_workers_SUITE: .............
-%%% blog_jobs_ops_SUITE: .......
-%%% blog_jobs_commit_SUITE: ......
+%%% blog_jobs_workers_SUITE: ...............
+%%% blog_jobs_ops_SUITE: ........
+%%% blog_jobs_queue_SUITE: .
 %%% blog_email_SUITE: .......
 %%% blog_email_notifications_SUITE: ...
-All 36 tests passed.
+All 34 tests passed.
 ```
 
 Failing jobs log `job failed` and `job discarded` warnings during the run; that is the retry tests doing their job.

@@ -100,7 +100,7 @@ end_per_testcase(_Case, _Config) ->
 
 The sandbox has limits, and each of them shows up in the blog's suites:
 
-- **Only Kura queries are in it.** Shigoto does not see the sandbox's connection, so `shigoto_jobs` rows are committed for real, even from inside a `blog_repo:transaction/1`. Jobs suites empty the table before checking out (`blog_jobs_fixtures:reset_jobs/0`, a `DELETE FROM shigoto_jobs` on the pool). The same thing means that a test of a job committing or rolling back with a Kura transaction proves nothing inside the sandbox; such tests run without it, in `blog_jobs_commit_SUITE`, and clean up after themselves (see [Operations](../jobs/operations.md#the-database-and-the-sandbox)).
+- **Shigoto's own processes are not in it.** Jobs a test inserts are on the sandbox's connection and roll back with everything else, but queue processes and the cron scheduler never see them. Tests run jobs with `shigoto:drain_queue/1`, which runs them in the test process; a test that needs a real queue process runs without the sandbox and cleans up after itself, in `blog_jobs_queue_SUITE` (see [Operations](../jobs/operations.md#the-database-and-the-sandbox)).
 - **State outside PostgreSQL is not rolled back**: sessions in `nova_session_ets`, the login rate limiter's counters, pub/sub subscriptions, the notification log. Reset what a test depends on (next sections).
 - **Sequences are not rolled back**, so ids keep growing between tests. Never assert on a literal id; read it from the row you created.
 - **No parallel test cases.** With one shared connection, two cases at once would share a transaction. Do not put `parallel` in a suite's groups.
