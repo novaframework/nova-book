@@ -16,8 +16,10 @@ jobs:
           echo "$PWD" >> $GITHUB_PATH
 
       - name: Install mdbook-admonish
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sSL https://github.com/tommilligan/mdbook-admonish/releases/download/v1.18.0/mdbook-admonish-v1.18.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          gh release download v1.18.0 -R tommilligan/mdbook-admonish -p 'mdbook-admonish-v1.18.0-x86_64-unknown-linux-gnu.tar.gz' -O - | tar xz
           echo "$PWD" >> $GITHUB_PATH
 
       - name: Build book
