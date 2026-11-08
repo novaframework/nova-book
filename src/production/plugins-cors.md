@@ -78,7 +78,7 @@ plugin_info() ->
         title => ~"blog_request_logger",
         version => ~"1.0.0",
         url => ~"https://github.com/novaframework/nova-book",
-        authors => [~"The Nova Book"],
+        authors => [~"Erlang Web Development with Nova"],
         description => ~"Logs method, path, status, duration and user id of each request",
         options => []
     }.

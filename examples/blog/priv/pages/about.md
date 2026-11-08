@@ -1,3 +1,3 @@
 # About this blog
 
-A small blog built with Nova while working through The Nova Book.
+A small blog built with Nova while working through Erlang Web Development with Nova.

@@ -17,7 +17,7 @@ plugin_info() ->
         title => ~"blog_rate_limit",
         version => ~"1.0.0",
         url => ~"https://github.com/novaframework/nova-book",
-        authors => [~"The Nova Book"],
+        authors => [~"Erlang Web Development with Nova"],
         description => ~"nova_auth_rate_limit with a stop reply Nova accepts"
     }.
 

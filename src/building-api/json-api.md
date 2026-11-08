@@ -332,7 +332,7 @@ plugin_info() ->
         title => ~"Require a JSON body",
         version => ~"1.0.0",
         url => ~"https://github.com/novaframework/nova-book",
-        authors => [~"The Nova Book"],
+        authors => [~"Erlang Web Development with Nova"],
         description => ~"Answers 415 when a write request has no decoded JSON body",
         options => []
     }.
