@@ -1,0 +1,10 @@
+## Name of the node. Distribution listens on loopback only.
+-sname blog@localhost
+-kernel inet_dist_use_interface {127,0,0,1}
+
+## The cookie comes from ~/.erlang.cookie. Production releases use
+## prod_vm.args.src, which reads it from RELEASE_COOKIE.
+
+## Enable kernel poll and SMP
++K true
++A30

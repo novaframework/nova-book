@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Thanks</title>
+</head>
+<body>
+  <h1>Thanks, {{ name }}!</h1>
+  {% for file in attachments %}
+  <p>Received {{ file.filename }} ({{ file.size }} bytes).</p>
+  {% endfor %}
+</body>
+</html>

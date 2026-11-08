@@ -1,245 +1,304 @@
 # Schemas and Migrations
 
-In the previous chapter we set up the database connection and repo. Now let's define schemas — Erlang modules that describe your data — and watch Kura generate migrations automatically.
+A Kura **schema** is an Erlang module that describes one table: its name, its columns and their types, its indexes and, later, its associations. You never write the SQL for that table. The `rebar3_kura` compile hook reads your schemas and generates migrations for whatever changed.
 
-## Defining the user schema
+We start with the two tables everything else hangs off: users and posts.
 
-Create `src/schemas/user.erl`:
+## The user schema
+
+Schemas live in `src/schemas/`. The blog's first version of `src/schemas/blog_user.erl`:
 
 ```erlang
--module(user).
+-module(blog_user).
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0]).
+-export([table/0, fields/0, indexes/0]).
 
-table() -> <<"users">>.
+table() -> ~"users".
 
 fields() ->
     [
         #kura_field{name = id, type = id, primary_key = true, nullable = false},
-        #kura_field{name = username, type = string, nullable = false},
         #kura_field{name = email, type = string, nullable = false},
-        #kura_field{name = password_hash, type = string, nullable = false},
+        #kura_field{name = username, type = string, nullable = false},
+        #kura_field{name = hashed_password, type = string, nullable = false},
+        #kura_field{
+            name = role, type = {enum, [author, admin]}, nullable = false, default = author
+        },
+        #kura_field{name = confirmed_at, type = utc_datetime},
         #kura_field{name = inserted_at, type = utc_datetime},
-        #kura_field{name = updated_at, type = utc_datetime}
+        #kura_field{name = updated_at, type = utc_datetime},
+        #kura_field{name = password, type = string, virtual = true},
+        #kura_field{name = password_confirmation, type = string, virtual = true}
+    ].
+
+indexes() ->
+    [
+        {[email], #{unique => true}},
+        {[username], #{unique => true}}
     ].
 ```
 
-A schema module implements the `kura_schema` behaviour and exports two required callbacks:
+- `table/0` and `fields/0` are the required callbacks. `indexes/0` is optional.
+- Each `#kura_field{}` has a `name` and a `type`. `primary_key`, `nullable` (default `true`) and `default` become column options in the migration.
+- `inserted_at` and `updated_at` are special: Kura fills them in on insert and update.
+- `virtual = true` fields exist only in changesets and never get a column. `password` and `password_confirmation` are virtual: the user types a password, we store only `hashed_password`. The [next chapter](changesets.md) does the hashing.
+- `confirmed_at` and the email/password fields follow the shape `nova_auth` expects, so the [Authentication](../auth-sessions/authentication.md) chapter can build on this table. `role` drives [Authorization](../auth-sessions/authorization.md).
 
-- **`table/0`** — the PostgreSQL table name
-- **`fields/0`** — a list of `#kura_field{}` records describing each column. Mark one field with `primary_key = true`.
+### Field types
 
-Each field has a `name` (atom), `type` (one of Kura's types), and optional properties like `nullable` and `default`.
-
-> **Auto-timestamps:** When a schema includes `inserted_at` and `updated_at` fields, Kura automatically sets them on insert and update operations — no need to manage them in your changesets.
-
-### Kura field types
-
-| Type | PostgreSQL | Erlang |
+| Kura type | PostgreSQL type | Erlang value |
 |---|---|---|
 | `id` | `BIGSERIAL` | integer |
-| `integer` | `INTEGER` | integer |
+| `integer`, `bigint`, `smallint` | `INTEGER`, `BIGINT`, `SMALLINT` | integer |
 | `float` | `DOUBLE PRECISION` | float |
+| `decimal` | `NUMERIC` | number |
 | `string` | `VARCHAR(255)` | binary |
 | `text` | `TEXT` | binary |
-| `boolean` | `BOOLEAN` | boolean |
-| `date` | `DATE` | `{Y, M, D}` |
-| `utc_datetime` | `TIMESTAMPTZ` | `{{Y,M,D},{H,Mi,S}}` |
+| `binary` | `BYTEA` | binary |
+| `boolean` | `BOOLEAN` | `true` / `false` |
+| `date`, `time` | `DATE`, `TIME` | `{Y, M, D}`, `{H, Mi, S}` |
+| `utc_datetime` | `TIMESTAMPTZ` | `{{Y, M, D}, {H, Mi, S}}` |
+| `naive_datetime` | `TIMESTAMP` | `{{Y, M, D}, {H, Mi, S}}` |
 | `uuid` | `UUID` | binary |
-| `jsonb` | `JSONB` | map/list |
-| `{enum, [atoms]}` | `VARCHAR(255)` | atom |
+| `jsonb` | `JSONB` | map or list |
+| `{enum, [atom()]}` | `VARCHAR(255)` | atom |
 | `{array, Type}` | `Type[]` | list |
-| `{embed, ...}` | — | map/list | *Covered in a later chapter* |
+| `{encrypted, Type}` | `BYTEA` | the inner type (see [Data Safety](data-safety.md)) |
 
-## Auto-generating migrations
-
-With the `rebar3_kura` compile hook we added in the previous chapter, compile the project:
-
-```shell
-rebar3 compile
+```admonish tip
+`string` is `VARCHAR(255)`. Use `text` for anything that can grow, like a post body.
 ```
 
-```
-===> kura: generated src/migrations/m20260223120000_update_schema.erl
-===> kura: migration generated
-===> Compiling blog
-```
+## The post schema
 
-Kura replayed existing migration files to determine the current database state (no migrations yet = empty database), then compared that against your schema definitions and generated a migration file.
-
-```admonish info
-Kura generates a single combined migration covering all schema changes detected since the last compile. If you define both `user` and `post` schemas before the first compile, both tables will appear in the same migration file. The migration module name uses `update_schema` rather than a table-specific name.
-```
-
-## Walking through the migration
-
-Open the generated file in `src/migrations/`:
+`src/schemas/blog_post.erl`, first version:
 
 ```erlang
--module(m20260223120000_update_schema).
--behaviour(kura_migration).
--include_lib("kura/include/kura.hrl").
-
--export([up/0, down/0]).
-
-up() ->
-    [{create_table, <<"users">>, [
-        #kura_column{name = id, type = id, primary_key = true, nullable = false},
-        #kura_column{name = username, type = string, nullable = false},
-        #kura_column{name = email, type = string, nullable = false},
-        #kura_column{name = password_hash, type = string, nullable = false},
-        #kura_column{name = inserted_at, type = utc_datetime},
-        #kura_column{name = updated_at, type = utc_datetime}
-    ]}].
-
-down() ->
-    [{drop_table, <<"users">>}].
-```
-
-The migration has two functions:
-- **`up/0`** — returns operations to apply (create the table)
-- **`down/0`** — returns operations to reverse (drop the table)
-
-Migration files are named with a timestamp prefix so they run in order.
-
-## Defining the post schema
-
-Now let's add a post schema with an enum type for status. Create `src/schemas/post.erl`:
-
-```erlang
--module(post).
+-module(blog_post).
 -behaviour(kura_schema).
 -include_lib("kura/include/kura.hrl").
 
--export([table/0, fields/0]).
+-export([table/0, fields/0, indexes/0]).
 
-table() -> <<"posts">>.
+table() -> ~"posts".
 
 fields() ->
     [
         #kura_field{name = id, type = id, primary_key = true, nullable = false},
         #kura_field{name = title, type = string, nullable = false},
-        #kura_field{name = body, type = text},
-        #kura_field{name = status, type = {enum, [draft, published, archived]}, default = draft},
-        #kura_field{name = user_id, type = integer},
+        #kura_field{name = body, type = text, nullable = false},
+        #kura_field{
+            name = status,
+            type = {enum, [draft, published, archived]},
+            nullable = false,
+            default = draft
+        },
+        #kura_field{name = user_id, type = bigint, nullable = false},
         #kura_field{name = inserted_at, type = utc_datetime},
         #kura_field{name = updated_at, type = utc_datetime}
     ].
+
+indexes() ->
+    [
+        {[user_id], #{}},
+        {[status], #{}}
+    ].
 ```
 
-The `status` field uses an enum type — Kura stores it as `VARCHAR(255)` in PostgreSQL but casts between atoms and binaries automatically. When you query a post, `status` comes back as an atom (`draft`, `published`, or `archived`).
+`user_id` points at the author. For now it is a plain `bigint`; the [Associations](associations.md) chapter declares the relationship and Kura adds the foreign key.
 
-Compile again:
+## Generating the migration
+
+With the compile hook from the previous chapter in place, compiling is all it takes:
 
 ```shell
 rebar3 compile
 ```
 
 ```
-===> kura: generated src/migrations/m20260223120100_update_schema.erl
+===> kura: generated src/migrations/m20261103072001_update_schema.erl
 ===> kura: migration generated
-===> Compiling blog
 ```
 
-A second migration appears for the posts table.
+The migration, `src/migrations/m20261103072001_update_schema.erl`:
+
+```erlang
+-module(m20261103072001_update_schema).
+-moduledoc false.
+-behaviour(kura_migration).
+-include_lib("kura/include/kura.hrl").
+-export([up/0, down/0]).
+
+-spec up() -> [kura_migration:operation()].
+up() ->
+    [
+        {create_table, ~"posts", [
+            #kura_column{name = id, type = id, primary_key = true, nullable = false},
+            #kura_column{name = title, type = string, nullable = false},
+            #kura_column{name = body, type = text, nullable = false},
+            #kura_column{
+                name = status,
+                type = {enum, [draft, published, archived]},
+                nullable = false,
+                default = draft
+            },
+            #kura_column{name = user_id, type = bigint, nullable = false},
+            #kura_column{name = inserted_at, type = utc_datetime},
+            #kura_column{name = updated_at, type = utc_datetime}
+        ]},
+        {create_table, ~"users", [
+            #kura_column{name = id, type = id, primary_key = true, nullable = false},
+            ...
+        ]},
+        {create_index, ~"posts", [user_id], #{}},
+        {create_index, ~"posts", [status], #{}},
+        {create_index, ~"users", [email], #{unique => true}},
+        {create_index, ~"users", [username], #{unique => true}}
+    ].
+
+-spec down() -> [kura_migration:operation()].
+down() ->
+    [
+        {drop_table, ~"posts"},
+        {drop_table, ~"users"}
+    ].
+```
+
+A migration is a `kura_migration` module whose `up/0` and `down/0` return a list of operations: `create_table`, `alter_table`, `create_index`, `drop_table`, `execute` and a few more. The file name starts with a UTC timestamp, which is also the version Kura records. The virtual fields got no column.
+
+The hook does not generate anything when nothing changed:
+
+```
+===> kura: schemas up to date
+```
+
+The generated file is already formatted with erlfmt, using the project's `print_width`, so `rebar3 fmt --check` passes right after a compile writes one.
+
+Commit migrations like any other source file. They are the history of your database.
 
 ## Running migrations
 
-In the previous chapter we added both `blog_repo:start()` and `kura_migrator:migrate(blog_repo)` to the supervisor. The repo start creates the connection pool; `migrate/1` checks the `schema_migrations` table and runs any pending migrations in order.
-
-Start the application:
-
-```shell
-rebar3 nova serve
-```
-
-Check the logs — you should see the migrations being applied:
+The blog runs `kura_migrator:migrate(blog_repo)` at boot (see [Database Setup](setup.md#running-migrations-at-boot)), so starting it applies the new migration:
 
 ```
-Kura: up migration 20260223120000 (m20260223120000_update_schema)
-Kura: up migration 20260223120100 (m20260223120100_update_schema)
+[info] Kura: up migration 20261103072001 (m20261103072001_update_schema)
 ```
 
-### The schema_migrations table
+Kura keeps applied versions in `schema_migrations`:
 
-Kura creates a `schema_migrations` table to track which migrations have been applied:
-
-```sql
-blog_dev=# SELECT * FROM schema_migrations;
-      version       |       inserted_at
---------------------+-------------------
- 20260223120000     | 2026-02-23 12:00:00
- 20260223120100     | 2026-02-23 12:01:00
+```
+blog_dev=# SELECT * FROM schema_migrations ORDER BY version;
+    version     |        inserted_at
+----------------+----------------------------
+ 20261103072001 | 2026-11-03 07:43:57.528022
 ```
 
-Each row records a migration version (the timestamp from the filename). Kura only runs migrations that are not in this table.
+## Changing a schema
 
-### Managing migrations
-
-During development you'll sometimes need to undo a migration or check what's been applied:
+Schemas change. Posts need to remember when they were published, so we add a field:
 
 ```erlang
-%% Roll back the last migration
-kura_migrator:rollback(blog_repo).
-
-%% Roll back the last 3 migrations
-kura_migrator:rollback(blog_repo, 3).
-
-%% Show status of all migrations (up or pending)
-kura_migrator:status(blog_repo).
+#kura_field{name = user_id, type = bigint, nullable = false},
+#kura_field{name = published_at, type = utc_datetime},
+#kura_field{name = inserted_at, type = utc_datetime},
 ```
 
-`status/1` returns a list of `{Version, Module, up | pending}` tuples — handy for verifying the state of your database during development.
-
-## Modifying schemas
-
-When you change a schema — add a field, remove one, or change a type — Kura detects the difference on the next compile and generates an `alter_table` migration.
-
-For example, add a `bio` field to the user schema:
-
-```erlang
-fields() ->
-    [
-        #kura_field{name = id, type = id, primary_key = true, nullable = false},
-        #kura_field{name = username, type = string, nullable = false},
-        #kura_field{name = email, type = string, nullable = false},
-        #kura_field{name = password_hash, type = string, nullable = false},
-        #kura_field{name = bio, type = text},
-        #kura_field{name = inserted_at, type = utc_datetime},
-        #kura_field{name = updated_at, type = utc_datetime}
-    ].
-```
-
-Compile:
-
-```shell
-rebar3 compile
-```
-
-```
-===> kura: generated src/migrations/m20260223120200_alter_users.erl
-===> kura: migration generated
-===> Compiling blog
-```
-
-The generated migration adds the column:
+`rebar3 compile` replays the existing migrations, sees one column missing and generates `m20261103072100_alter_posts.erl`:
 
 ```erlang
 up() ->
-    [{alter_table, <<"users">>, [
-        {add_column, #kura_column{name = bio, type = text}}
-    ]}].
+    [
+        {alter_table, ~"posts", [
+            {add_column, #kura_column{name = published_at, type = utc_datetime}}
+        ]}
+    ].
 
 down() ->
-    [{alter_table, <<"users">>, [
-        {drop_column, bio}
-    ]}].
+    [
+        {alter_table, ~"posts", [
+            {drop_column, published_at}
+        ]}
+    ].
 ```
 
-Define your schema, compile, migration appears. No SQL files to maintain.
+Removing a field generates a `drop_column`, a new index a `create_index`, and so on. Never edit a migration that has already run somewhere; change the schema and let the hook generate the next one.
+
+## Tooling
+
+`rebar3 kura` lists the plugin's commands:
+
+```
+kura <task>:
+  check                  Fail if schemas have drifted from migrations
+  compile                Auto-generate Kura migrations from schema changes
+  gen_auth               Generate email/password authentication schemas
+  gen_schemas            Generate kura schemas from an existing PostgreSQL database
+  lint_migrations        Flag unsafe (destructive or blocking) migration operations
+  setup                  Set up Kura in your project
+```
+
+### rebar3 kura check
+
+`check` is the CI version of `compile`: it computes the same diff but writes nothing and fails if a migration is missing. On the blog:
+
+```shell
+rebar3 kura check
+```
+
+```
+===> kura: no schema drift
+```
+
+Add a field to `blog_post` without compiling, and `check` catches it:
+
+```
+===> kura: blog has 1 missing migration op(s):
+===>   - missing ALTER TABLE "posts" (1 ops)
+```
+
+followed by an error line telling you to run `rebar3 kura compile` and commit the result. Run it in CI so a schema change can never be merged without its migration.
+
+### rebar3 kura lint_migrations
+
+`lint_migrations` reads every migration and flags operations that are dangerous while old code is still running against the database: `drop_table`, `drop_column`, `rename_column` and `modify_column`. When you really mean it, list the operation in the migration's optional `safe/0` callback and the linter stops flagging it.
+
+```shell
+rebar3 kura lint_migrations
+```
+
+```
+===> kura: no unsafe migration operations
+```
+
+### Status and rollback
+
+`kura_migrator` also works from the shell. `status/1` lists every migration and whether it ran:
+
+```erlang
+1> kura_migrator:status(blog_repo).
+[{20261103072001,m20261103072001_update_schema,up},
+ {20261103072100,m20261103072100_alter_posts,up},
+ ...]
+```
+
+`rollback/1` runs `down/0` of the latest migration and warns when that is destructive. Rolling back the audit table from the [Data Safety](data-safety.md) chapter:
+
+```erlang
+2> kura_migrator:rollback(blog_repo).
+[warning] Kura: unsafe operation in m20261103073500_create_audit_log: drop_table <<"audit_log">> - Deploy code that stops using the table first, then drop in a later migration
+[info] Kura: down migration 20261103073500 (m20261103073500_create_audit_log)
+{ok,[20261103073500]}
+3> lists:last(kura_migrator:status(blog_repo)).
+{20261103073500,m20261103073500_create_audit_log,pending}
+4> kura_migrator:migrate(blog_repo).
+[info] Kura: up migration 20261103073500 (m20261103073500_create_audit_log)
+{ok,[20261103073500]}
+```
+
+`rollback/2` takes a number of steps.
 
 ---
 
-Now that we have tables, let's learn about [changesets and validation](changesets.md) — how Kura validates and tracks data changes before they hit the database.
+The tables exist. Next we control what goes into them with [Changesets and Validation](changesets.md).

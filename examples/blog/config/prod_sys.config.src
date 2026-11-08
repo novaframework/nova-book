@@ -1,0 +1,132 @@
+%% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+[
+ {kernel, [
+     {logger_level, info},
+     {logger, [
+         {handler, default, logger_std_h, #{
+             formatter => {nova_jsonlogger, #{new_line => true}},
+             filters => [{progress, {fun logger_filters:progress/2, stop}}]
+         }}
+     ]}
+ ]},
+ {blog, [
+     {json_lib, blog_json},
+     {ops_token, ~"${BLOG_OPS_TOKEN}"},
+     {metrics, #{port => ${METRICS_PORT:-9464}, ip => {0, 0, 0, 0}}},
+     {cors_origins, []},
+     {base_url, ~"${BLOG_BASE_URL}"},
+     {mailer, #{
+         adapter => hikyaku_adapter_mailgun,
+         api_key => ~"${MAILGUN_API_KEY}",
+         domain => ~"${MAILGUN_DOMAIN}",
+         base_url => ~"https://api.eu.mailgun.net"
+     }},
+     {mail_from, {~"Nova Blog", ~"${MAIL_FROM}"}}
+ ]},
+ {shigoto, [
+     {repo, blog_repo},
+     {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+     {cron, [
+         {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+     ]}
+ ]},
+ {nova, [
+     {environment, prod},
+     {use_stacktrace, false},
+     {bootstrap_application, blog},
+     {shutdown_drain_timeout, 10000},
+     {cowboy_configuration, #{
+         port => ${HTTP_PORT:-8080},
+         stream_handlers => [
+             otel_nova_stream_h,
+             nova_stream_h,
+             blog_session_h,
+             cowboy_compress_h,
+             cowboy_stream_h
+         ],
+         middleware_handlers => [
+             arizona_cowboy_middleware,
+             nova_router,
+             nova_plugin_handler,
+             nova_security_handler,
+             nova_handler,
+             nova_plugin_handler
+         ]
+     }},
+     {plugins, [
+         {pre_request, otel_nova_plugin, #{}},
+         {pre_request, blog_request_logger, #{}},
+         {pre_request, nova_request_plugin, #{decode_json_body => true,
+                                              read_urlencoded_body => true}},
+         {post_request, blog_request_logger, #{}}
+     ]}
+ ]},
+ {arizona_nova, [
+     {drain_timeout, 5000},
+     {routes, [
+         {live, ~"/live/counter", blog_live_counter, #{layouts => [{blog_live_layout, render}]}},
+         {live, ~"/live/editor", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [{blog_live_middleware, require_user}]
+         }},
+         {live, ~"/live/editor/:id", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, own_post}
+             ]
+         }},
+         {live, ~"/live/posts/:id", blog_live_post, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, current_user},
+                 {blog_live_middleware, published_post},
+                 {arizona_middleware, fetch_flash}
+             ]
+         }},
+         {live, ~"/live/dashboard/:section", blog_live_dashboard, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings}
+             ]
+         }},
+         {ws, ~"/live/ws", #{}},
+         {asset, ~"/assets/arizona", {priv_dir, arizona, "static/assets/js"}}
+     ]}
+ ]},
+ {kura, [
+     {repos, #{
+         blog_repo => #{
+             backend => kura_backend_postgres,
+             host => "${DB_HOST}",
+             port => ${DB_PORT:-5432},
+             database => "${DB_NAME}",
+             user => "${DB_USER}",
+             password => "${DB_PASSWORD}",
+             pool_size => 10
+         }
+     }},
+     {migration_lock_timeout, 60000},
+     {encryption, #{
+         active => 1,
+         keys => [{1, ~"${KURA_ENCRYPTION_KEY}"}]
+     }}
+ ]},
+ {opentelemetry, [
+     {span_processor, batch},
+     {traces_exporter, otlp},
+     {sampler, {parent_based, #{root => {otel_nova_sampler, [~"GET /heartbeat", ~"GET /health"]}}}}
+ ]},
+ {opentelemetry_nova, [{trust_incoming_context, false}]},
+ {opentelemetry_experimental, [
+     {readers, [
+         #{
+             module => otel_metric_reader,
+             config => #{export_interval_ms => 10000, exporter => {otel_nova_prom_exporter, #{}}}
+         }
+     ]}
+ ]}
+].

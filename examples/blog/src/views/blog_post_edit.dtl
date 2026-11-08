@@ -1,0 +1,11 @@
+{% extends "blog_layout.dtl" %}
+{% block title %}Edit {{ post.title }}{% endblock %}
+{% block content %}
+<h1>Edit post</h1>
+<form method="post" action="/posts/{{ post.id }}">
+  <input type="hidden" name="lock_version" value="{{ post.lock_version }}">
+  {% include "partials/post_form.dtl" %}
+  <button type="submit">Save</button>
+  <a href="/posts/{{ post.id }}">Cancel</a>
+</form>
+{% endblock %}

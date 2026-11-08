@@ -1,0 +1,125 @@
+%% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+[
+ {kernel, [
+     {logger_level, debug},
+     {logger, [
+         {handler, default, logger_std_h, #{
+             formatter => {flatlog, #{
+                 map_depth => 3,
+                 term_depth => 50,
+                 colored => true,
+                 template => [colored_start, "[\033[1m", level, "\033[0m", colored_start, "] [", time, "]",
+                              colored_end, " ", msg, " (", mfa, ")\n"]
+             }}
+         }}
+     ]}
+ ]},
+ {blog, [
+     {json_lib, blog_json},
+     {ops_token, ~"dev-ops-token"},
+     {metrics, #{port => 9464}},
+     {cors_origins, [~"http://localhost:5173"]},
+     {mailer, #{adapter => hikyaku_adapter_logger, level => notice}},
+     {mail_from, {~"Nova Blog", ~"noreply@blog.test"}}
+ ]},
+ {shigoto, [
+     {repo, blog_repo},
+     {queues, [{~"default", 10}, {~"mailers", 5}, {~"maintenance", 1}]},
+     {cron, [
+         {~"purge-deleted-posts", ~"0 3 * * *", blog_purge_worker, #{~"days" => 30}}
+     ]}
+ ]},
+ {nova, [
+     {use_stacktrace, true},
+     {environment, dev},
+     {cowboy_configuration, #{
+         port => 8080,
+         stream_handlers => [
+             otel_nova_stream_h,
+             nova_stream_h,
+             blog_session_h,
+             cowboy_compress_h,
+             cowboy_stream_h
+         ],
+         middleware_handlers => [
+             arizona_cowboy_middleware,
+             nova_router,
+             nova_plugin_handler,
+             nova_security_handler,
+             nova_handler,
+             nova_plugin_handler
+         ]
+     }},
+     {bootstrap_application, blog},
+     {plugins, [
+         {pre_request, otel_nova_plugin, #{}},
+         {pre_request, blog_request_logger, #{}},
+         {pre_request, nova_request_plugin, #{decode_json_body => true,
+                                              read_urlencoded_body => true}},
+         {post_request, blog_request_logger, #{}}
+     ]}
+ ]},
+ {arizona_nova, [
+     {routes, [
+         {live, ~"/live/counter", blog_live_counter, #{layouts => [{blog_live_layout, render}]}},
+         {live, ~"/live/editor", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [{blog_live_middleware, require_user}]
+         }},
+         {live, ~"/live/editor/:id", blog_live_editor, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, own_post}
+             ]
+         }},
+         {live, ~"/live/posts/:id", blog_live_post, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, path_bindings},
+                 {blog_live_middleware, current_user},
+                 {blog_live_middleware, published_post},
+                 {arizona_middleware, fetch_flash}
+             ]
+         }},
+         {live, ~"/live/dashboard/:section", blog_live_dashboard, #{
+             layouts => [{blog_live_layout, render}],
+             middlewares => [
+                 {blog_live_middleware, require_user},
+                 {blog_live_middleware, path_bindings}
+             ]
+         }},
+         {ws, ~"/live/ws", #{}},
+         {mcp, ~"/mcp", arizona_dev_mcp, #{allow_remote_access => false}},
+         {asset, ~"/assets/arizona", {priv_dir, arizona, "static/assets/js"}}
+     ]}
+ ]},
+ {opentelemetry, [{span_processor, batch}, {traces_exporter, none}]},
+ {opentelemetry_experimental, [
+     {readers, [
+         #{
+             module => otel_metric_reader,
+             config => #{export_interval_ms => 5000, exporter => {otel_nova_prom_exporter, #{}}}
+         }
+     ]}
+ ]},
+ {kura, [
+     {repos, #{
+         blog_repo => #{
+             backend => kura_backend_postgres,
+             host => "localhost",
+             port => 5432,
+             database => "blog_dev",
+             user => "postgres",
+             password => "postgres",
+             pool_size => 10
+         }
+     }},
+     %% Development-only key. Generate your own: base64 of 32 random bytes.
+     {encryption, #{
+         active => 1,
+         keys => [{1, ~"ec/kfyy6LwSTNrK7oGj3PkEc8KhsmcIRcC43z0kl89Q="}]
+     }}
+ ]}
+].

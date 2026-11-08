@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Forbidden - Nova Blog</title>
+  <link rel="stylesheet" href="/assets/css/blog.css">
+</head>
+<body>
+  <main>
+    <h1>Forbidden</h1>
+    <p>You are not allowed to do that.</p>
+    <p><a href="/posts">Back to the posts</a></p>
+  </main>
+</body>
+</html>

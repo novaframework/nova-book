@@ -1,261 +1,680 @@
-# JSON API with Generators
+# JSON APIs with Generators
 
-In the previous chapter we built a posts controller by hand. The `rebar3_nova` plugin includes generators that scaffold controllers, JSON schemas, and test suites so you can skip the boilerplate.
+In Part II we wrote the posts API by hand. `rebar3_nova` can scaffold the pieces of a resource for you: a controller, a JSON schema, route hints and a test suite. In this chapter we use the generators to add a second resource, a **tags API**, look closely at what they produce, and turn it into working, tested code. On the way we validate request bodies against a JSON schema.
 
-## Generate a resource
+The finished API:
 
-The `nova gen_resource` command creates a controller, a JSON schema, and prints route definitions. Like `gen_controller`, it also accepts `--actions` to limit which actions are scaffolded:
+| Method | Path | Success | Errors |
+|---|---|---|---|
+| `GET` | `/api/tags` | 200, all tags by name | |
+| `GET` | `/api/tags/:id` | 200, the tag and its posts | 404 |
+| `POST` | `/api/tags` | 201 and a `location` header | 400, 415, 422 |
+| `PUT` | `/api/tags/:id` | 200, the renamed tag | 400, 404, 415, 422 |
+| `DELETE` | `/api/tags/:id` | 204 | 404 |
+
+Tags already exist in the database. `blog_tag` and the `post_tags` join schema come from [Many-to-Many & Embedded Schemas](../data-layer/advanced-data.md), and `PUT /api/posts/:id/tags` attaches them to posts. What is missing is a way to manage the tags themselves.
+
+## Generating a resource
 
 ```shell
-rebar3 nova gen_resource --name posts
-===> Writing src/controllers/blog_posts_controller.erl
-===> Writing priv/schemas/post.json
-
-Add these routes to your router:
-
-  {<<"/posts">>, {blog_posts_controller, list}, #{methods => [get]}}
-  {<<"/posts/:id">>, {blog_posts_controller, show}, #{methods => [get]}}
-  {<<"/posts">>, {blog_posts_controller, create}, #{methods => [post]}}
-  {<<"/posts/:id">>, {blog_posts_controller, update}, #{methods => [put]}}
-  {<<"/posts/:id">>, {blog_posts_controller, delete}, #{methods => [delete]}}
+rebar3 nova gen_resource --name tags
 ```
 
-### The generated controller
+```
+===> Created .../blog/src/controllers/blog_tags_controller.erl
+===> Created .../blog/priv/schemas/tag.json
+===> 
+Add these route groups to your router:
+
+===>   #{prefix => "",
+===>     routes => [
+===>         {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
+===>         {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}}
+===>     ]},
+===>   #{prefix => "",
+===>     %% Placeholders: replace require_bearer/1 with your security function
+===>     %% and blog_body_limit with a plugin that refuses large bodies. Until
+===>     %% both exist, these routes fail closed.
+===>     security => fun blog_auth_security:require_bearer/1,
+===>     %% Plugins run before security, so the group sets its own instead of
+===>     %% inheriting a global body decoder that reads any size of body.
+===>     plugins => [
+===>         {pre_request, blog_body_limit, #{}},
+===>         {pre_request, nova_request_plugin, #{decode_json_body => true}},
+===>         {pre_request, nova_json_schemas, #{}}
+===>     ],
+===>     routes => [
+===>         {"/tags", fun blog_tags_controller:create/1, #{methods => [post], extra_state => #{json_schema => "schemas/tag.json"}}},
+===>         {"/tags/:id", fun blog_tags_controller:update/1, #{methods => [put], extra_state => #{json_schema => "schemas/tag.json"}}},
+===>         {"/tags/:id", fun blog_tags_controller:delete/1, #{methods => [delete]}}
+===>     ]}
+```
+
+The name is used as given: `--name tags` makes `blog_tags_controller` and, after stripping one trailing `s`, `tag.json`. `--actions list,show` limits the actions, as with `gen_controller`. The generator never overwrites a file that already exists.
+
+### The controller
+
+The controller, as generated:
 
 ```erlang
--module(blog_posts_controller).
+-module(blog_tags_controller).
+
 -export([
-         list/1,
-         show/1,
-         create/1,
-         update/1,
-         delete/1
-        ]).
+    list/1,
+    show/1,
+    create/1,
+    update/1,
+    delete/1
+]).
 
 list(_Req) ->
-    {json, #{<<"message">> => <<"TODO">>}}.
+    {json, #{~"message" => ~"TODO"}}.
 
 show(_Req) ->
-    {json, #{<<"message">> => <<"TODO">>}}.
+    {json, #{~"message" => ~"TODO"}}.
 
 create(_Req) ->
-    {status, 201, #{}, #{<<"message">> => <<"TODO">>}}.
+    {json, 201, #{}, #{~"message" => ~"TODO"}}.
 
 update(_Req) ->
-    {json, #{<<"message">> => <<"TODO">>}}.
+    {json, #{~"message" => ~"TODO"}}.
 
 delete(_Req) ->
     {status, 204}.
 ```
 
-Every action returns a valid Nova response tuple so you can compile and run immediately.
+These are the same stubs `gen_controller` writes (see [Controllers](../foundations/controllers.md#generating-controllers)): every action takes the request and answers with a placeholder, with the status code each action should end up with. They give us the function names; the bodies come below.
 
-### The generated JSON schema
+### The JSON schema
 
-`priv/schemas/post.json`:
+`priv/schemas/tag.json`:
 
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
+  "$schema": "http://json-schema.org/draft-06/schema#",
   "properties": {
-    "id": { "type": "integer" },
     "name": { "type": "string" }
   },
-  "required": ["id", "name"]
+  "required": [
+    "name"
+  ],
+  "type": "object"
 }
 ```
 
-Edit this to match your actual data model:
+It describes a create or update body: an object with a string `name`. It declares draft-06 because `nova_json_schemas` (below) validates with jesse, which knows drafts 3, 4 and 6. It works as it is; we tighten it below. The test `generated_schema_validates_a_create_body` in the companion app checks that jesse accepts `{"name": "otp"}` and rejects `{}` with this schema.
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "id": { "type": "integer", "description": "Unique identifier" },
-    "title": { "type": "string", "description": "Post title" },
-    "body": { "type": "string", "description": "Post body" },
-    "status": { "type": "string", "enum": ["draft", "published", "archived"] },
-    "user_id": { "type": "integer", "description": "Author ID" }
-  },
-  "required": ["title", "body"]
-}
-```
+### The route hints
 
-This schema is picked up by the [OpenAPI generator](openapi-tools.md) to produce API documentation automatically.
+The hints are two route groups, written the way the rest of the router is: string paths and `fun Module:Function/1`. The reads are public. The writes get a group of their own with a security function, a body size limit and their own plugin list, and the create and update routes point at the schema. `blog_auth_security:require_bearer/1` and `blog_body_limit` are placeholders: the blog has neither module, and until both exist every write fails, so a pasted hint cannot leave the writes open by accident.
 
-## Filling in Kura calls
+We will write the groups ourselves in [Routes](#routes) below, after the code they point to exists. To keep this chapter about the API itself, the blog starts with one open group for all five routes. `rebar3 nova audit` lists the open writes in the next chapter, and [Security](../production/security.md#tag-writes-need-an-admin) gives them the group the hint describes, behind an admin's bearer token.
 
-Replace the TODO stubs with actual Kura repo calls. Since we already wrote a full posts controller in the [CRUD chapter](../data-layer/crud.md), here is the pattern — generate, then fill in:
+## A context module
+
+As with posts, the controller should not build queries itself. `src/blog_tags.erl` holds the tag operations:
 
 ```erlang
--module(blog_posts_controller).
--include_lib("kura/include/kura.hrl").
+-module(blog_tags).
 
--export([
-         list/1,
-         show/1,
-         create/1,
-         update/1,
-         delete/1
-        ]).
+-export([list_tags/0, get_tag/1, get_tag/2, create_tag/1, update_tag/2, delete_tag/1]).
+
+list_tags() ->
+    blog_repo:all(kura_query:order_by(kura_query:from(blog_tag), [{name, asc}])).
+
+get_tag(Id) ->
+    case kura_types:cast(id, Id) of
+        {ok, TagId} when is_integer(TagId) -> blog_repo:get(blog_tag, TagId);
+        _ -> {error, not_found}
+    end.
+
+get_tag(Id, Preloads) ->
+    case get_tag(Id) of
+        {ok, Tag} -> {ok, blog_repo:preload(blog_tag, Tag, Preloads)};
+        {error, not_found} -> {error, not_found}
+    end.
+
+create_tag(Params) ->
+    blog_repo:insert(blog_tag:changeset(#{}, Params)).
+
+update_tag(Tag, Params) ->
+    blog_repo:update(blog_tag:changeset(Tag, Params)).
+
+delete_tag(Tag) ->
+    blog_repo:delete(kura_changeset:cast(blog_tag, Tag, #{}, [])).
+```
+
+`get_tag/1` works like `blog_posts:get_post/1`: the id arrives as a binary from the path, and anything that does not cast to an integer is simply "not found". `blog_tag:changeset/2` already validates the name (required, at most 30 characters, lowercase letters, digits and dashes), and because `blog_tag:indexes/0` declares a unique index on `name`, a duplicate comes back as a changeset error without any extra code (see [Constraints](../data-layer/changesets.md#constraints)).
+
+Deleting a tag also removes its rows in `post_tags`; the join table's foreign key was created with `on_delete = cascade`. The posts themselves stay.
+
+## The controller
+
+Here is the controller after filling in the stubs:
+
+```erlang
+-module(blog_tags_controller).
+-fallback_controller(blog_api_fallback_controller).
+
+-export([list/1, show/1, create/1, update/1, delete/1]).
 
 list(_Req) ->
-    Q = kura_query:from(post),
-    Q1 = kura_query:order_by(Q, [{inserted_at, desc}]),
-    {ok, Posts} = blog_repo:all(Q1),
-    {json, #{posts => [post_to_json(P) || P <- Posts]}}.
+    {ok, Tags} = blog_tags:list_tags(),
+    {json, #{tags => [blog_api_json:tag(Tag) || Tag <- Tags]}}.
 
-show(#{bindings := #{<<"id">> := Id}}) ->
-    case blog_repo:get(post, binary_to_integer(Id)) of
-        {ok, Post} ->
-            {json, post_to_json(Post)};
-        {error, not_found} ->
-            {status, 404, #{}, #{error => <<"post not found">>}}
+show(#{bindings := #{~"id" := Id}}) ->
+    maybe
+        {ok, Tag} ?= blog_tags:get_tag(Id, [posts]),
+        {json, blog_api_json:tag(Tag)}
     end.
 
 create(#{json := Params}) ->
-    CS = post:changeset(#{}, Params),
-    case blog_repo:insert(CS) of
-        {ok, Post} ->
-            {json, 201, #{}, post_to_json(Post)};
-        {error, #kura_changeset{} = CS1} ->
-            {json, 422, #{}, #{errors => changeset_errors_to_json(CS1)}}
-    end;
-create(_Req) ->
-    {status, 422, #{}, #{error => <<"request body required">>}}.
-
-update(#{bindings := #{<<"id">> := Id}, json := Params}) ->
-    case blog_repo:get(post, binary_to_integer(Id)) of
-        {ok, Post} ->
-            CS = post:changeset(Post, Params),
-            case blog_repo:update(CS) of
-                {ok, Updated} ->
-                    {json, post_to_json(Updated)};
-                {error, #kura_changeset{} = CS1} ->
-                    {json, 422, #{}, #{errors => changeset_errors_to_json(CS1)}}
-            end;
-        {error, not_found} ->
-            {status, 404, #{}, #{error => <<"post not found">>}}
+    maybe
+        {ok, #{id := Id} = Tag} ?= blog_tags:create_tag(Params),
+        Location = iolist_to_binary([~"/api/tags/", integer_to_binary(Id)]),
+        {json, 201, #{~"location" => Location}, blog_api_json:tag(Tag)}
     end.
 
-delete(#{bindings := #{<<"id">> := Id}}) ->
-    case blog_repo:get(post, binary_to_integer(Id)) of
-        {ok, Post} ->
-            CS = kura_changeset:cast(post, Post, #{}, []),
-            {ok, _} = blog_repo:delete(CS),
-            {status, 204};
-        {error, not_found} ->
-            {status, 404, #{}, #{error => <<"post not found">>}}
+update(#{bindings := #{~"id" := Id}, json := Params}) ->
+    maybe
+        {ok, Tag} ?= blog_tags:get_tag(Id),
+        {ok, Updated} ?= blog_tags:update_tag(Tag, Params),
+        {json, blog_api_json:tag(Updated)}
     end.
 
-%% Helpers
-
-post_to_json(#{id := Id, title := Title, body := Body, status := Status,
-               user_id := UserId}) ->
-    #{id => Id, title => Title, body => Body,
-      status => atom_to_binary(Status), user_id => UserId}.
-
-changeset_errors_to_json(#kura_changeset{errors = Errors}) ->
-    lists:foldl(fun({Field, Msg}, Acc) ->
-        Key = atom_to_binary(Field),
-        Existing = maps:get(Key, Acc, []),
-        Acc#{Key => Existing ++ [Msg]}
-    end, #{}, Errors).
+delete(#{bindings := #{~"id" := Id}}) ->
+    maybe
+        {ok, Tag} ?= blog_tags:get_tag(Id),
+        {ok, _} ?= blog_tags:delete_tag(Tag),
+        {status, 204}
+    end.
 ```
 
-## Generate a test suite
-
-The `nova gen_test` command scaffolds a Common Test suite:
-
-```shell
-rebar3 nova gen_test --name posts
-===> Writing test/blog_posts_controller_SUITE.erl
-```
-
-The generated suite has test cases for each CRUD action that make HTTP requests against your running application:
+Every action is the happy path. When a step fails, the `maybe` expression returns that step's value: `{error, not_found}` from `get_tag`, or `{error, Changeset}` from an insert or update. Nova has no handler for `error` tuples, so it passes them to the module named in `-fallback_controller` (introduced in [Controllers](../foundations/controllers.md#fallback-controllers)). One fallback for the whole API keeps the error responses consistent:
 
 ```erlang
--module(blog_posts_controller_SUITE).
+-module(blog_api_fallback_controller).
+-include_lib("kernel/include/logger.hrl").
+-include_lib("kura/include/kura.hrl").
+
+-export([resolve/2]).
+
+resolve(_Req, {error, not_found}) ->
+    {json, 404, #{}, #{error => ~"not_found"}};
+resolve(_Req, {error, #kura_changeset{} = CS}) ->
+    {json, 422, #{}, #{errors => blog_api_json:errors(CS)}};
+resolve(_Req, Unexpected) ->
+    ?LOG_ERROR(#{msg => ~"unexpected controller return", return => Unexpected}),
+    {json, 500, #{}, #{error => ~"internal_error"}}.
+```
+
+`blog_api_json:errors/1` is the changeset helper from [Rendering errors in JSON responses](../data-layer/changesets.md#rendering-errors-in-json-responses). The [Error Handling](error-handling.md) chapter looks at where else API errors come from.
+
+The JSON for a tag lives next to `post/1` in `src/blog_api_json.erl`. The `posts` key is only there when the posts were preloaded, as in `show/1`:
+
+```erlang
+tag(Tag) ->
+    Json = #{
+        id => maps:get(id, Tag),
+        name => maps:get(name, Tag),
+        inserted_at => datetime(maps:get(inserted_at, Tag))
+    },
+    case Tag of
+        #{posts := Posts} when is_list(Posts) -> Json#{posts => [post(Post) || Post <- Posts]};
+        #{} -> Json
+    end.
+```
+
+Add `tag/1` to the module's export list.
+
+```admonish note title="Who may change tags?"
+Unlike the posts API, whose writes need a bearer token since [Authentication](../auth-sessions/authentication.md#api-tokens), the tags API has `security => false`, so anyone can create and delete tags. `rebar3 nova audit` (next chapter) lists every write route that is still open, and [Security](../production/security.md#tag-writes-need-an-admin) moves the write routes into their own group that requires an admin's bearer token. The tests in the companion app already send one.
+```
+
+## Validating request bodies with JSON schemas
+
+A changeset checks values: is the name short enough, is it unique. Before that, it is worth rejecting bodies that have the wrong *shape*: an array instead of an object, a number where a string belongs, fields the API does not know. That is what JSON schemas are for, and [`nova_json_schemas`](https://github.com/novaframework/nova_json_schemas) is a Nova plugin that checks a decoded body against one. Nova itself does not ship schema validation, so add the dependency to `rebar.config`:
+
+```erlang
+{deps, [
+    ...
+    {nova_json_schemas, "~> 0.3"},
+    ...
+]}.
+```
+
+and `nova_json_schemas` to `applications` in `src/blog.app.src` so it is part of the release. It pulls in [jesse](https://github.com/for-GET/jesse), the validator.
+
+```admonish note
+The Hex package of `nova_json_schemas` 0.3.0 declares a dependency on nova `0.13.7`. Rebar3 always prefers the version the project itself asks for, so the blog keeps nova 0.18.1, and the plugin works with it.
+```
+
+Tighten the generated `priv/schemas/tag.json` so it describes exactly what clients may send:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "title": "tag",
+  "type": "object",
+  "properties": {
+    "name": {"type": "string", "description": "Lowercase letters, digits and dashes"}
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}
+```
+
+The schema describes the body: an object with a string `name` and nothing else (`additionalProperties`). `title` and `description` are for people reading the schema, or the OpenAPI spec built from it in the next chapter. The rules about *which* strings are allowed stay in `blog_tag:changeset/2`, so they live in one place, and they produce field-level messages.
+
+### Routes
+
+The tags get their own route group in `src/blog_router.erl`, placed after the posts group and before the last group (static files and status codes):
+
+```erlang
+#{
+    prefix => "/api",
+    security => false,
+    plugins => [
+        {pre_request, nova_request_plugin, #{decode_json_body => true}},
+        {pre_request, blog_require_json_plugin, #{}},
+        {pre_request, nova_json_schemas, #{render_errors => false}}
+    ],
+    routes => [
+        {"/tags", fun blog_tags_controller:list/1, #{methods => [get]}},
+        {"/tags/:id", fun blog_tags_controller:show/1, #{methods => [get]}},
+        {"/tags", fun blog_tags_controller:create/1, #{
+            methods => [post], extra_state => #{json_schema => "schemas/tag.json"}
+        }},
+        {"/tags/:id", fun blog_tags_controller:update/1, #{
+            methods => [put], extra_state => #{json_schema => "schemas/tag.json"}
+        }},
+        {"/tags/:id", fun blog_tags_controller:delete/1, #{methods => [delete]}},
+        {"/openapi.json", "openapi/openapi.json", #{mimetype => ~"application/json"}}
+    ]
+},
+```
+
+(The `/openapi.json` route belongs to the [next chapter](openapi-tools.md#serving-the-spec).)
+
+A route opts in to validation with `extra_state => #{json_schema => Path}`, where the path is relative to the application's `priv` directory. Nova copies a route's `extra_state` into the request map, which is where the plugin looks.
+
+A group's `plugins` replace the global ones (see [Plugins](../foundations/plugins.md)), so the list starts with `nova_request_plugin`. The order matters: plugins run top to bottom, and the schema plugin needs the `json` key that the request plugin adds.
+
+```admonish warning
+The `nova_json_schemas` README says the request plugin must come *after* it because "Nova runs the plugins bottom-up". That is not true for Nova 0.18.1, which runs them in list order. Put `nova_request_plugin` first.
+```
+
+### Requests without a JSON body
+
+When a request has no decoded body (no body at all, a form post, `text/plain`), there is no `json` key, and `nova_json_schemas` returns `{error, body_not_parsed}`. Nova 0.18.1 does not handle an `{error, _}` return from a plugin: the request process crashes and the client gets an empty 500. `blog_require_json_plugin` sits between the two plugins and answers such write requests itself:
+
+```erlang
+-module(blog_require_json_plugin).
+-behaviour(nova_plugin).
+
+-export([pre_request/4, post_request/4, plugin_info/0]).
+
+pre_request(#{json := _} = Req, _Env, _Options, State) ->
+    {ok, Req, State};
+pre_request(#{method := Method} = Req, _Env, _Options, State) when
+    Method =:= ~"POST"; Method =:= ~"PUT"; Method =:= ~"PATCH"
+->
+    Body = json:encode(#{error => ~"expected a JSON body"}),
+    {stop, {reply, 415, #{~"content-type" => ~"application/json"}, Body}, Req, State};
+pre_request(Req, _Env, _Options, State) ->
+    {ok, Req, State}.
+
+post_request(Req, _Env, _Options, State) ->
+    {ok, Req, State}.
+
+plugin_info() ->
+    #{
+        title => ~"Require a JSON body",
+        version => ~"1.0.0",
+        url => ~"https://github.com/novaframework/nova-book",
+        authors => [~"The Nova Book"],
+        description => ~"Answers 415 when a write request has no decoded JSON body",
+        options => []
+    }.
+```
+
+Returning `{stop, {reply, Status, Headers, Body}, Req, State}` sends that response and skips the rest of the chain, controller included. `415 Unsupported Media Type` tells the client what is wrong. GET and DELETE requests pass through untouched. [Custom Plugins & CORS](../production/plugins-cors.md) covers writing plugins in depth.
+
+### Rendering schema errors
+
+With `render_errors => true` the plugin answers a failed validation with a JSON list of jesse errors. Here is a body with an unknown field (trimmed path):
+
+```
+HTTP/1.1 400 Bad Request
+content-type: application/json
+
+[{"error_type":"no_extra_properties_allowed","actual_value":{"title":"x"},"error_context":"schema_violation","expected_value":["title"],"field_info":{"$id":"file:///.../blog/schemas/tag.json","$schema":"http://json-schema.org/draft-06/schema#","additionalProperties":false,"properties":{"name":{"description":"Lowercase letters, digits and dashes","type":"string"}},"required":["name"],"title":"tag","type":"object"}}]
+```
+
+```admonish warning
+For errors about the whole object, `field_info` contains the entire schema, and its `$id` is the **absolute path on the server** (jesse sets it, whatever you write in the file). The labels are also misleading (`expected_value` holds the path of the offending value) and only the first error is reported. The blog sets `render_errors => false`, so a shape error is a plain `400` with no body, and leaves the detailed messages to the changeset.
+```
+
+## Trying it
+
+Save the router (`rebar3 nova serve` registers the new routes) and create two tags:
+
+```shell
+curl -i -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"name":"erlang"}'
+```
+
+```
+HTTP/1.1 201 Created
+content-length: 61
+content-type: application/json
+location: /api/tags/1
+...
+
+{"id":1,"name":"erlang","inserted_at":"2026-11-03T08:22:09Z"}
+```
+
+```shell
+curl -s -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"name":"nova"}'
+curl -s localhost:8080/api/tags
+```
+
+```json
+{"tags":[{"id":1,"name":"erlang","inserted_at":"2026-11-03T08:22:09Z"},{"id":2,"name":"nova","inserted_at":"2026-11-03T08:22:09Z"}]}
+```
+
+`show` includes the tag's posts, here none yet. Tag a post with `PUT /api/posts/:id/tags` and it appears in the list:
+
+```shell
+curl -s localhost:8080/api/tags/1
+```
+
+```json
+{"id":1,"name":"erlang","inserted_at":"2026-11-03T08:22:09Z","posts":[]}
+```
+
+Each layer rejects what it is responsible for. The changeset rejects a duplicate and a badly formed name, with messages per field:
+
+```shell
+curl -i -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"name":"erlang"}'
+```
+
+```
+HTTP/1.1 422 Unprocessable Entity
+content-length: 46
+content-type: application/json
+...
+
+{"errors":{"name":["has already been taken"]}}
+```
+
+```shell
+curl -s -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"name":"Not Valid!"}'
+```
+
+```json
+{"errors":{"name":["has invalid format"]}}
+```
+
+The schema rejects a body of the wrong shape, the require-JSON plugin a body that is not JSON, and the request plugin JSON that does not parse:
+
+```shell
+curl -i -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"title":"erlang"}'
+```
+
+```
+HTTP/1.1 400 Bad Request
+content-length: 0
+...
+```
+
+```shell
+curl -i -X POST localhost:8080/api/tags -d 'name=erlang'
+```
+
+```
+HTTP/1.1 415 Unsupported Media Type
+content-length: 32
+content-type: application/json
+...
+
+{"error":"expected a JSON body"}
+```
+
+```shell
+curl -i -X POST localhost:8080/api/tags -H 'content-type: application/json' -d '{"name":'
+```
+
+```
+HTTP/1.1 400 Bad Request
+content-length: 0
+...
+```
+
+Renaming, deleting and missing tags:
+
+```shell
+curl -s -X PUT localhost:8080/api/tags/2 -H 'content-type: application/json' -d '{"name":"otp"}'
+```
+
+```json
+{"id":2,"name":"otp","inserted_at":"2026-11-03T08:22:09Z"}
+```
+
+```shell
+curl -i -X DELETE localhost:8080/api/tags/2
+```
+
+```
+HTTP/1.1 204 No Content
+...
+```
+
+```shell
+curl -i -X DELETE localhost:8080/api/tags/2
+```
+
+```
+HTTP/1.1 404 Not Found
+content-length: 21
+content-type: application/json
+...
+
+{"error":"not_found"}
+```
+
+A method the path does not support gets `405` with an `allow` header, from Nova's router:
+
+```shell
+curl -i -X PATCH localhost:8080/api/tags/1
+```
+
+```
+HTTP/1.1 405 Method Not Allowed
+allow: DELETE, GET, PUT
+content-length: 0
+...
+```
+
+## Generating a test suite
+
+```shell
+rebar3 nova gen_test --name tags
+```
+
+```
+===> Created .../blog/test/blog_tags_controller_SUITE.erl
+```
+
+The suite it writes has one case per route the controller serves, with the paths taken from the compiled router, `/api` prefix included:
+
+```erlang
+-module(blog_tags_controller_SUITE).
+
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1]).
--export([test_list/1, test_show/1, test_create/1, test_update/1, test_delete/1]).
+-export([
+    test_delete/1,
+    test_list/1,
+    test_show/1,
+    test_create/1,
+    test_update/1
+]).
 
 all() ->
-    [test_list, test_show, test_create, test_update, test_delete].
+    [
+        test_delete,
+        test_list,
+        test_show,
+        test_create,
+        test_update
+    ].
 
 init_per_suite(Config) ->
-    application:ensure_all_started(inets),
-    application:ensure_all_started(blog),
+    {ok, _} = application:ensure_all_started(inets),
+    {ok, _} = application:ensure_all_started(blog),
     Config.
 
 end_per_suite(_Config) ->
-    application:stop(blog),
-    ok.
-
-test_list(_Config) ->
-    {ok, {{_, 200, _}, _, _}} =
-        httpc:request("http://localhost:8080/posts").
-
-test_show(_Config) ->
-    {ok, {{_, 200, _}, _, _}} =
-        httpc:request("http://localhost:8080/posts/1").
-
-test_create(_Config) ->
-    {ok, {{_, 201, _}, _, _}} =
-        httpc:request(post, {"http://localhost:8080/posts", [],
-                             "application/json", "{}"}, [], []).
-
-test_update(_Config) ->
-    {ok, {{_, 200, _}, _, _}} =
-        httpc:request(put, {"http://localhost:8080/posts/1", [],
-                            "application/json", "{}"}, [], []).
+    ok = application:stop(blog).
 
 test_delete(_Config) ->
-    {ok, {{_, 204, _}, _, _}} =
-        httpc:request(delete, {"http://localhost:8080/posts/1", []}, [], []).
+    ?assertMatch({ok, {{_, 204, _}, _, _}}, request(delete, "/api/tags/1")).
+
+test_list(_Config) ->
+    ?assertMatch({ok, {{_, 200, _}, _, _}}, request(get, "/api/tags")).
+
+test_show(_Config) ->
+    ?assertMatch({ok, {{_, 200, _}, _, _}}, request(get, "/api/tags/1")).
+
+test_create(_Config) ->
+    ?assertMatch({ok, {{_, 201, _}, _, _}}, request(post, "/api/tags", ~"{\"name\": \"test\"}")).
+
+test_update(_Config) ->
+    ?assertMatch({ok, {{_, 200, _}, _, _}}, request(put, "/api/tags/1", ~"{\"name\": \"test\"}")).
+
+request(Method, Path) ->
+    httpc:request(Method, {url(Path), []}, [], []).
+
+request(Method, Path, Body) ->
+    httpc:request(Method, {url(Path), [], "application/json", Body}, [], []).
+
+url(Path) ->
+    Cowboy = application:get_env(nova, cowboy_configuration, #{}),
+    "http://localhost:" ++ integer_to_list(maps:get(port, Cowboy, 8080)) ++ Path.
 ```
 
-Update the request bodies and assertions to match your actual API. We will cover testing in detail in the [Testing](../testing/unit-testing.md) chapter.
-
-## Other generators
-
-Generate a controller with specific actions:
+It reads the port from the test config, and it sends a body the schema accepts. Against the stubs it was generated for, all five cases pass. Against the real controller, on a fresh test database, two fail:
 
 ```shell
-rebar3 nova gen_controller --name comments --actions list,create
-===> Writing src/controllers/blog_comments_controller.erl
+rebar3 ct --suite=test/blog_tags_controller_SUITE
 ```
 
-## Typical workflow
+```
+%%% blog_tags_controller_SUITE: 
+%%% blog_tags_controller_SUITE ==> test_delete: FAILED
+%%% blog_tags_controller_SUITE ==> 
+Failure/Error: ?assertMatch({ ok , { { _ , 204 , _ } , _ , _ } }, request ( delete , "/api/tags/1" ))
+  expected: = { ok , { { _ , 204 , _ } , _ , _ } }
+       got: {ok,{{"HTTP/1.1",404,"Not Found"},
+...
+%%% blog_tags_controller_SUITE ==> test_show: FAILED
+...
+Failed 2 tests. Passed 3 tests. 
+```
 
-Adding a new resource to your API:
+The generator cannot know your data, so the suite is a starting point:
+
+- `show`, `update` and `delete` use id `1` and assume that tag exists. `test_update` passed only because `test_create` ran before it and happened to create tag 1.
+- Nothing isolates the database. The tag `test_create` makes stays in the test database, and the next run, or another suite that counts tags, sees it.
+- Each case checks only the status code.
+
+Adapt it the way the Part II suites work: start the app with `blog_data_fixtures:start/0`, give each test a database sandbox, create the tag the test needs, and use the fixtures' `request/2,3`, which take the port from the config and decode the JSON. Rename the file to `test/blog_api_tags_SUITE.erl` (and the `-module`) so the API suites sit together. The five generated cases become:
+
+```erlang
+init_per_suite(Config) ->
+    blog_data_fixtures:start(),
+    Config.
+
+end_per_suite(_Config) ->
+    application:stop(blog).
+
+init_per_testcase(_Case, Config) ->
+    blog_data_fixtures:checkout(),
+    {ok, Tag} = blog_tags:create_tag(#{~"name" => ~"erlang"}),
+    [{tag_path, "/api/tags/" ++ integer_to_list(maps:get(id, Tag))} | Config].
+
+end_per_testcase(_Case, _Config) ->
+    blog_data_fixtures:checkin().
+
+test_list(_Config) ->
+    {200, #{~"tags" := [#{~"name" := ~"erlang"}]}} = blog_data_fixtures:request(get, "/api/tags").
+
+test_show(Config) ->
+    {200, #{~"name" := ~"erlang", ~"posts" := []}} =
+        blog_data_fixtures:request(get, ?config(tag_path, Config)).
+
+test_create(_Config) ->
+    {201, #{~"name" := ~"otp", ~"id" := Id}} =
+        blog_data_fixtures:request(post, "/api/tags", #{name => ~"otp"}),
+    true = is_integer(Id).
+
+test_update(Config) ->
+    {200, #{~"name" := ~"beam"}} =
+        blog_data_fixtures:request(put, ?config(tag_path, Config), #{name => ~"beam"}).
+
+test_delete(Config) ->
+    {204, <<>>} = blog_data_fixtures:request(delete, ?config(tag_path, Config)),
+    {404, _} = blog_data_fixtures:request(get, ?config(tag_path, Config)).
+```
+
+Then add a case for every error path. For requests the JSON helper cannot make (a wrong content type, broken JSON) the suite has a small `raw/4`:
+
+```erlang
+create_without_json_is_415(_Config) ->
+    {415, _, Body} = raw(post, "/api/tags", "text/plain", ~"otp"),
+    #{~"error" := ~"expected a JSON body"} = json:decode(Body).
+
+create_malformed_json_is_400(_Config) ->
+    {400, _, <<>>} = raw(post, "/api/tags", "application/json", ~"{\"name\":").
+```
+
+```erlang
+raw(Method, Path, ContentType, Body) ->
+    {ok, {{_, Status, _}, Headers, RespBody}} =
+        httpc:request(
+            Method,
+            {blog_data_fixtures:url(Path), [], ContentType, Body},
+            [],
+            [{body_format, binary}]
+        ),
+    {Status, Headers, RespBody}.
+```
+
+The full suite also covers sorting, the `location` header, tagged and soft-deleted posts in `show`, duplicates, invalid names, each kind of schema violation, unknown ids, deleting a tag that posts use, and 405:
 
 ```shell
-# 1. Define the Kura schema
-vi src/schemas/comment.erl
-
-# 2. Compile to generate the migration
-rebar3 compile
-
-# 3. Generate the resource (controller + schema + route hints)
-rebar3 nova gen_resource --name comments
-
-# 4. Copy the printed routes into your router
-
-# 5. Fill in the Kura repo calls in the controller
-
-# 6. Generate a test suite
-rebar3 nova gen_test --name comments
-
-# 7. Run the tests
-rebar3 ct
+rebar3 ct --suite=test/blog_api_tags_SUITE
 ```
 
-Generate, fill in the Kura calls, test. Three steps to a working API.
+```
+%%% blog_api_tags_SUITE: ..........................
+All 26 tests passed.
+```
+
+## The workflow
+
+Adding a resource to the blog's API comes down to:
+
+1. Define or reuse the Kura schema; `rebar3 compile` generates the migration.
+2. `rebar3 nova gen_resource --name <plural>` for the controller and schema files and the route hints.
+3. Write a context module with the Kura calls.
+4. Replace the stubs with happy-path actions and a fallback controller.
+5. Tighten `priv/schemas/<singular>.json` to describe exactly the request body.
+6. Add the route groups with the plugins and `json_schema` options.
+7. `rebar3 nova gen_test --name <plural>`, then adapt it as above and cover the error paths.
 
 ---
 
-Our posts API works with flat data. Next, let's generate [API documentation and inspect our application](openapi-tools.md) with Nova's built-in tools.
+Next, let's [document the API and inspect it](openapi-tools.md) with the rest of the `rebar3 nova` tooling.

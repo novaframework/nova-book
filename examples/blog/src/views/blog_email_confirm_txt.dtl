@@ -1,0 +1,8 @@
+{% autoescape off %}Hi {{ username }},
+
+Confirm your email address for the Nova Blog by opening this link:
+
+{{ url }}
+
+The link works once and expires in {{ days }} day{{ days|pluralize }}. If you did not create an account, ignore this email.
+{% endautoescape %}
