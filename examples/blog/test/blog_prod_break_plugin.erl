@@ -14,7 +14,7 @@ plugin_info() ->
         title => ~"Breaking test plugin",
         version => ~"1.0.0",
         url => ~"https://github.com/novaframework/nova-book",
-        authors => [~"The Nova Book"],
+        authors => [~"Erlang Web Development with Nova"],
         description => ~"Returns break from pre_request",
         options => []
     }.

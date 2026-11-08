@@ -159,7 +159,7 @@ set-cookie: session_id=beqyG+82R+7bvrvqqGroB0wmqknK2o/faPbDvmPZLPY=
 
 # About this blog
 
-A small blog built with Nova while working through The Nova Book.
+A small blog built with Nova while working through Erlang Web Development with Nova.
 ```
 
 The path is fixed in code. Never build it from a binding or a query parameter; that is how path traversal bugs happen. To serve a whole directory, use a [static route](routing.md#static-files) instead.

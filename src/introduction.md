@@ -4,6 +4,10 @@
 
 [Nova](https://github.com/novaframework/nova) is a web framework for Erlang/OTP. It handles routing, request processing, template rendering, sessions, and WebSockets: the core pieces you need to build web applications and APIs. Nova sits on top of [Cowboy](https://github.com/ninenines/cowboy), the battle-tested Erlang HTTP server, and adds a structured layer for organizing your application.
 
+## What this book covers
+
+Nova is the centre of this book, but not all of it. A web application needs more than a framework, and in Erlang the rest comes from separate libraries that work with Nova: Kura for the database, nova_auth for authentication, Arizona for live views, Hikyaku for email, Shigoto for background jobs and opentelemetry_nova for observability. The book teaches each of them where the application needs it, so by the end you can build, test and run a complete web application in Erlang, not just its Nova part.
+
 ## Who this book is for
 
 This book is for anyone who wants to build web applications with Erlang, whether you are an experienced developer exploring a new stack or a newcomer picking up Erlang for the first time. If you have built anything with another web framework (Express, Rails, Django, Phoenix, etc.) you will feel right at home, but it is not a requirement. Basic familiarity with HTTP and databases is enough to get started.

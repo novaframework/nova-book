@@ -26,7 +26,7 @@ plugin_info() ->
         title => ~"blog_cors_plugin",
         version => ~"1.0.0",
         url => ~"https://github.com/novaframework/nova-book",
-        authors => [~"The Nova Book"],
+        authors => [~"Erlang Web Development with Nova"],
         description => ~"CORS with an origin allowlist and explicit methods and headers",
         options => [
             {allow_origins, ~"Origins that may call the routes, e.g. [~\"https://app.example\"]"},

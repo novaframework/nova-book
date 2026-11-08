@@ -2,8 +2,8 @@
 authors = ["Nova Framework Team"]
 language = "en"
 src = "src"
-title = "The Nova Book"
-description = "A practical guide to building web applications with Nova and Erlang/OTP"
+title = "Erlang Web Development with Nova"
+description = "A practical guide to building production web applications in Erlang with Nova and the libraries around it"
 
 [build]
 build-dir = "book"
