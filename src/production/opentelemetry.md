@@ -15,13 +15,7 @@ When the blog is slow or failing in production you want three things: a trace of
 ]}.
 ```
 
-The lock file resolves them to opentelemetry_nova 0.5.0, opentelemetry_kura 0.2.2, the SDK `opentelemetry` 1.7.0, `opentelemetry_experimental` 0.6.0 (the metrics SDK, pulled in by opentelemetry_nova) and `opentelemetry_exporter` 1.11.0. The exporter is the OTLP client: `{traces_exporter, otlp}` (and the SDK's default exporter) is that module, and opentelemetry_nova does not depend on it.
-
-opentelemetry_nova's own `rebar.config` has a shell `pre_hooks` entry meant for building the library on its own. It fails when the library is compiled as a dependency, so the blog's `rebar.config` empties it:
-
-```erlang
-{overrides, [{override, opentelemetry_nova, [{pre_hooks, []}]}]}.
-```
+The lock file resolves them to opentelemetry_nova 0.5.1, opentelemetry_kura 0.2.2, the SDK `opentelemetry` 1.7.0, `opentelemetry_experimental` 0.6.0 (the metrics SDK, pulled in by opentelemetry_nova) and `opentelemetry_exporter` 1.11.0. The exporter is the OTLP client: `{traces_exporter, otlp}` (and the SDK's default exporter) is that module, and opentelemetry_nova does not depend on it.
 
 All five go into `blog.app.src` **before** `nova` and `kura`, so the SDK is running before the first request or query is instrumented:
 
