@@ -32,7 +32,6 @@ end_per_suite(_Config) ->
     application:stop(blog).
 
 init_per_testcase(_Case, Config) ->
-    ok = blog_jobs_fixtures:reset_jobs(),
     blog_jobs_fixtures:capture_mail(),
     blog_data_fixtures:reset_rate_limit(),
     blog_data_fixtures:checkout(),

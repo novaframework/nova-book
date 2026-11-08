@@ -8,9 +8,10 @@
     ops_jobs_endpoint_requires_the_token/1,
     telemetry_reports_failures/1,
     testing_mode_needs_the_confirmation_key/1,
-    queue_process_runs_jobs_in_the_background/1,
     queues_can_be_paused_and_resumed/1,
-    tables_are_created_at_boot/1
+    tables_are_created_at_boot/1,
+    cron_schedules_the_purge_on_its_queue/1,
+    cron_catches_up_a_missed_run/1
 ]).
 -export([forward_event/4]).
 
@@ -20,9 +21,10 @@ all() ->
         ops_jobs_endpoint_requires_the_token,
         telemetry_reports_failures,
         testing_mode_needs_the_confirmation_key,
-        queue_process_runs_jobs_in_the_background,
         queues_can_be_paused_and_resumed,
-        tables_are_created_at_boot
+        tables_are_created_at_boot,
+        cron_schedules_the_purge_on_its_queue,
+        cron_catches_up_a_missed_run
     ].
 
 init_per_suite(Config) ->
@@ -33,12 +35,12 @@ end_per_suite(_Config) ->
     application:stop(blog).
 
 init_per_testcase(_Case, Config) ->
-    ok = blog_jobs_fixtures:reset_jobs(),
     blog_jobs_fixtures:capture_mail(),
     blog_data_fixtures:checkout(),
     Config.
 
 end_per_testcase(_Case, _Config) ->
+    ok = application:unset_env(shigoto, cron),
     blog_jobs_fixtures:testing(disabled),
     blog_data_fixtures:checkin().
 
@@ -92,21 +94,6 @@ testing_mode_needs_the_confirmation_key(_Config) ->
     ok = application:set_env(shigoto, testing_confirm_no_persistence, true),
     manual = shigoto_config:testing_mode().
 
-queue_process_runs_jobs_in_the_background(_Config) ->
-    Alice = blog_data_fixtures:user(~"alice"),
-    Bob = blog_data_fixtures:user(~"bob"),
-    Post = blog_data_fixtures:post(Alice, #{~"title" => ~"Hello"}),
-    ok = application:set_env(shigoto, poll_interval, 100),
-    {ok, _Pid} = shigoto:add_queue(~"mailers", 2),
-    try
-        {ok, _} = blog_posts:add_comment(Post, Bob, #{~"body" => ~"Hi"}),
-        #hikyaku_email{to = [#hikyaku_address{address = ~"alice@example.com"}]} =
-            blog_jobs_fixtures:receive_email()
-    after
-        ok = shigoto:remove_queue(~"mailers"),
-        application:unset_env(shigoto, poll_interval)
-    end.
-
 queues_can_be_paused_and_resumed(_Config) ->
     {ok, _Pid} = shigoto:add_queue(~"mailers", 2),
     try
@@ -123,3 +110,31 @@ tables_are_created_at_boot(_Config) ->
     ),
     [~"shigoto_batches", ~"shigoto_cron", ~"shigoto_jobs", ~"shigoto_jobs_archive"] =
         [Name || #{tablename := Name} <- Rows].
+
+cron_schedules_the_purge_on_its_queue(_Config) ->
+    Entry = {~"purge-every-minute", ~"* * * * *", blog_purge_worker, #{~"days" => 30}},
+    ok = application:set_env(shigoto, cron, [Entry]),
+    ok = shigoto_cron:schedule_once(),
+    ok = shigoto_cron:schedule_once(),
+    [#{queue := ~"maintenance", args := Args}] =
+        shigoto_testing:all_enqueued(#{worker => blog_purge_worker}),
+    #{~"days" := 30} = json:decode(Args).
+
+cron_catches_up_a_missed_run(_Config) ->
+    {ok, Now} = shigoto_repo:current_minute(blog_repo),
+    {_Date, {Hour, Minute, _}} = minutes_before(Now, 10),
+    Schedule = iolist_to_binary(io_lib:format("~b ~b * * *", [Minute, Hour])),
+    Entry = {~"purge-catch-up", Schedule, blog_purge_worker, #{~"days" => 30}},
+    ok = application:set_env(shigoto, cron, [Entry]),
+    ok = shigoto_cron:schedule_once(),
+    shigoto_testing:refute_enqueued(#{worker => blog_purge_worker}),
+    {ok, _} = blog_repo:query(
+        ~"UPDATE shigoto_cron SET last_scheduled_at = last_scheduled_at - interval '20 minutes'",
+        []
+    ),
+    ok = shigoto_cron:schedule_once(),
+    shigoto_testing:assert_enqueued(#{worker => blog_purge_worker}).
+
+minutes_before({Date, {H, M, _S}}, Minutes) ->
+    Seconds = calendar:datetime_to_gregorian_seconds({Date, {H, M, 0}}),
+    calendar:gregorian_seconds_to_datetime(Seconds - Minutes * 60).

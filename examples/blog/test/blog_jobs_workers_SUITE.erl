@@ -15,7 +15,9 @@
     scheduled_publish_waits_until_due/1,
     dependent_job_waits_for_its_predecessor/1,
     shigoto_transaction_groups_job_inserts/1,
-    sandbox_does_not_hold_job_inserts/1,
+    job_rolls_back_with_a_kura_transaction/1,
+    kura_write_rolls_back_with_a_shigoto_transaction/1,
+    rolled_back_comment_takes_its_notification_along/1,
     purge_worker_keeps_recent_deletions/1
 ]).
 
@@ -32,7 +34,9 @@ all() ->
         scheduled_publish_waits_until_due,
         dependent_job_waits_for_its_predecessor,
         shigoto_transaction_groups_job_inserts,
-        sandbox_does_not_hold_job_inserts,
+        job_rolls_back_with_a_kura_transaction,
+        kura_write_rolls_back_with_a_shigoto_transaction,
+        rolled_back_comment_takes_its_notification_along,
         purge_worker_keeps_recent_deletions
     ].
 
@@ -44,7 +48,6 @@ end_per_suite(_Config) ->
     application:stop(blog).
 
 init_per_testcase(_Case, Config) ->
-    ok = blog_jobs_fixtures:reset_jobs(),
     blog_jobs_fixtures:capture_mail(),
     blog_data_fixtures:checkout(),
     Alice = blog_data_fixtures:user(~"alice"),
@@ -192,7 +195,7 @@ shigoto_transaction_groups_job_inserts(_Config) ->
         end,
     shigoto_testing:refute_enqueued(#{worker => blog_publish_worker}).
 
-sandbox_does_not_hold_job_inserts(_Config) ->
+job_rolls_back_with_a_kura_transaction(_Config) ->
     rolled_back =
         try
             blog_repo:transaction(fun() ->
@@ -204,7 +207,34 @@ sandbox_does_not_hold_job_inserts(_Config) ->
         catch
             throw:rolled_back -> rolled_back
         end,
-    shigoto_testing:assert_enqueued(#{worker => blog_publish_worker, state => ~"available"}).
+    shigoto_testing:refute_enqueued(#{worker => blog_publish_worker}).
+
+kura_write_rolls_back_with_a_shigoto_transaction(_Config) ->
+    rolled_back =
+        try
+            shigoto:transaction(fun() ->
+                _ = blog_data_fixtures:user(~"carol"),
+                throw(rolled_back)
+            end)
+        catch
+            throw:rolled_back -> rolled_back
+        end,
+    {error, not_found} = blog_repo:get_by(blog_user, [{username, ~"carol"}]).
+
+rolled_back_comment_takes_its_notification_along(Config) ->
+    {rolled_back, CommentId} =
+        try
+            blog_repo:transaction(fun() ->
+                {ok, #{id := Id}} = blog_posts:add_comment(
+                    ?config(post, Config), ?config(bob, Config), #{~"body" => ~"Nice post"}
+                ),
+                throw({rolled_back, Id})
+            end)
+        catch
+            throw:RolledBack -> RolledBack
+        end,
+    {error, not_found} = blog_repo:get(blog_comment, CommentId),
+    shigoto_testing:refute_enqueued(#{worker => blog_comment_notification_worker}).
 
 purge_worker_keeps_recent_deletions(Config) ->
     {ok, _} = blog_posts:delete_post(?config(post, Config)),
